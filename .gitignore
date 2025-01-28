@@ -5,6 +5,7 @@ log.log
 **/node_modules
 *.pyc
 *.vsix
+envVars.txt
 **/.vscode/.ropeproject/**
 **/testFiles/**/.cache/**
 *.noseids
@@ -22,7 +23,8 @@ cucumber-report.json
 **/.venv*/
 port.txt
 precommit.hook
-pythonFiles/lib/**
+python_files/lib/**
+python_files/get-pip.py
 debug_coverage*/**
 languageServer/**
 languageServer.*/**
@@ -44,5 +46,11 @@ nodeLanguageServer.*/**
 dist/**
 # translation files
 *.xlf
-*.nls.*.json
-*.i18n.json
+package.nls.*.json
+l10n/
+python-env-tools/**
+# coverage files produced as test output
+python_files/tests/*/.data/.coverage*
+python_files/tests/*/.data/*/.coverage*
+src/testTestingRootWkspc/coverageWorkspace/.coverage
+

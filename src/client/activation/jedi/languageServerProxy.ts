@@ -16,7 +16,7 @@ import { killPid } from '../../common/process/rawProcessApis';
 import { traceDecoratorError, traceDecoratorVerbose, traceError } from '../../logging';
 
 export class JediLanguageServerProxy implements ILanguageServerProxy {
-    public languageClient: LanguageClient | undefined;
+    private languageClient: LanguageClient | undefined;
 
     private readonly disposables: Disposable[] = [];
 
@@ -52,12 +52,15 @@ export class JediLanguageServerProxy implements ILanguageServerProxy {
             (options.middleware ? (<JediLanguageClientMiddleware>options.middleware).serverVersion : undefined) ??
             '0.19.3';
 
-        const client = await this.factory.createLanguageClient(resource, interpreter, options);
-        this.registerHandlers(client);
-
-        await client.start();
-
-        this.languageClient = client;
+        try {
+            const client = await this.factory.createLanguageClient(resource, interpreter, options);
+            this.registerHandlers(client);
+            await client.start();
+            this.languageClient = client;
+        } catch (ex) {
+            traceError('Failed to start language server:', ex);
+            throw new Error('Launching Jedi language server using python failed, see output.');
+        }
     }
 
     @traceDecoratorVerbose('Stopping language server')
@@ -81,6 +84,7 @@ export class JediLanguageServerProxy implements ILanguageServerProxy {
 
             try {
                 await client.stop();
+                await client.dispose();
                 killServer();
             } catch (ex) {
                 traceError('Stopping language client failed', ex);

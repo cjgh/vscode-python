@@ -10,12 +10,13 @@ import {
     Middleware,
     ResponseError,
 } from 'vscode-languageclient';
+import { ConfigurationItem } from 'vscode-languageserver-protocol';
 
 import { HiddenFilePrefix } from '../common/constants';
-import { IConfigurationService } from '../common/types';
 import { createDeferred, isThenable } from '../common/utils/async';
 import { StopWatch } from '../common/utils/stopWatch';
 import { IEnvironmentVariablesProvider } from '../common/variables/types';
+import { IInterpreterService } from '../interpreter/contracts';
 import { IServiceContainer } from '../ioc/types';
 import { EventName } from '../telemetry/constants';
 import { LanguageServerType } from './types';
@@ -65,7 +66,7 @@ export class LanguageClientMiddlewareBase implements Middleware {
                 return next(params, token);
             }
 
-            const configService = this.serviceContainer.get<IConfigurationService>(IConfigurationService);
+            const interpreterService = this.serviceContainer.get<IInterpreterService>(IInterpreterService);
             const envService = this.serviceContainer.get<IEnvironmentVariablesProvider>(IEnvironmentVariablesProvider);
 
             let settings = next(params, token);
@@ -86,9 +87,7 @@ export class LanguageClientMiddlewareBase implements Middleware {
                     const settingDict: LSPObject & { pythonPath: string; _envPYTHONPATH: string } = settings[
                         i
                     ] as LSPObject & { pythonPath: string; _envPYTHONPATH: string };
-
-                    settingDict.pythonPath =
-                        (await this.getPythonPathOverride(uri)) ?? configService.getSettings(uri).pythonPath;
+                    settingDict.pythonPath = (await interpreterService.getActiveInterpreter(uri))?.path ?? 'python';
 
                     const env = await envService.getEnvironmentVariables(uri);
                     const envPYTHONPATH = env.PYTHONPATH;
@@ -96,16 +95,16 @@ export class LanguageClientMiddlewareBase implements Middleware {
                         settingDict._envPYTHONPATH = envPYTHONPATH;
                     }
                 }
+
+                this.configurationHook(item, settings[i] as LSPObject);
             }
 
             return settings;
         },
     };
 
-    // eslint-disable-next-line class-methods-use-this
-    protected async getPythonPathOverride(_uri: Uri | undefined): Promise<string | undefined> {
-        return undefined;
-    }
+    // eslint-disable-next-line class-methods-use-this, @typescript-eslint/no-empty-function
+    protected configurationHook(_item: ConfigurationItem, _settings: LSPObject): void {}
 
     private get connected(): Promise<boolean> {
         return this.connectedPromise.promise;
@@ -170,6 +169,29 @@ export class LanguageClientMiddlewareBase implements Middleware {
     public willSaveWaitUntil() {
         return this.callNext('willSaveWaitUntil', arguments);
     }
+
+    public async didOpenNotebook() {
+        return this.callNotebooksNext('didOpen', arguments);
+    }
+
+    public async didSaveNotebook() {
+        return this.callNotebooksNext('didSave', arguments);
+    }
+
+    public async didChangeNotebook() {
+        return this.callNotebooksNext('didChange', arguments);
+    }
+
+    public async didCloseNotebook() {
+        return this.callNotebooksNext('didClose', arguments);
+    }
+
+    notebooks = {
+        didOpen: this.didOpenNotebook.bind(this),
+        didSave: this.didSaveNotebook.bind(this),
+        didChange: this.didChangeNotebook.bind(this),
+        didClose: this.didCloseNotebook.bind(this),
+    };
 
     public async provideCompletionItem() {
         if (await this.connected) {
@@ -325,7 +347,12 @@ export class LanguageClientMiddlewareBase implements Middleware {
 
     public async provideOnTypeFormattingEdits() {
         if (await this.connected) {
-            return this.callNext('provideOnTypeFormattingEdits', arguments);
+            return this.callNextAndSendTelemetry(
+                'textDocument/onTypeFormatting',
+                debounceFrequentCall,
+                'provideOnTypeFormattingEdits',
+                arguments,
+            );
         }
     }
 
@@ -376,7 +403,12 @@ export class LanguageClientMiddlewareBase implements Middleware {
 
     public async provideTypeDefinition() {
         if (await this.connected) {
-            return this.callNext('provideTypeDefinition', arguments);
+            return this.callNextAndSendTelemetry(
+                'textDocument/typeDefinition',
+                debounceRareCall,
+                'provideTypeDefinition',
+                arguments,
+            );
         }
     }
 
@@ -400,13 +432,23 @@ export class LanguageClientMiddlewareBase implements Middleware {
 
     public async provideFoldingRanges() {
         if (await this.connected) {
-            return this.callNext('provideFoldingRanges', arguments);
+            return this.callNextAndSendTelemetry(
+                'textDocument/foldingRange',
+                debounceFrequentCall,
+                'provideFoldingRanges',
+                arguments,
+            );
         }
     }
 
     public async provideSelectionRanges() {
         if (await this.connected) {
-            return this.callNext('provideSelectionRanges', arguments);
+            return this.callNextAndSendTelemetry(
+                'textDocument/selectionRange',
+                debounceRareCall,
+                'provideSelectionRanges',
+                arguments,
+            );
         }
     }
 
@@ -463,6 +505,17 @@ export class LanguageClientMiddlewareBase implements Middleware {
         return args[args.length - 1](...args);
     }
 
+    private callNotebooksNext(funcName: 'didOpen' | 'didSave' | 'didChange' | 'didClose', args: IArguments) {
+        // This function uses the last argument to call the 'next' item. If we're allowing notebook
+        // middleware, it calls into the notebook middleware first.
+        if (this.notebookAddon?.notebooks && (this.notebookAddon.notebooks as any)[funcName]) {
+            // It would be nice to use args.callee, but not supported in strict mode
+            return (this.notebookAddon.notebooks as any)[funcName](...args);
+        }
+
+        return args[args.length - 1](...args);
+    }
+
     private callNextAndSendTelemetry<T extends keyof MiddleWareMethods>(
         lspMethod: string,
         debounceMilliseconds: number,
@@ -510,7 +563,7 @@ export class LanguageClientMiddlewareBase implements Middleware {
                 this.lastCaptured.set(lspMethod, now);
                 this.eventCount += 1;
 
-                // Replace all slashes in the method name so it doesn't get scrubbed by vscode-extension-telemetry.
+                // Replace all slashes in the method name so it doesn't get scrubbed by @vscode/extension-telemetry.
                 const formattedMethod = lspMethod.replace(/\//g, '.');
 
                 const properties = {

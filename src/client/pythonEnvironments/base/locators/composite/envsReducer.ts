@@ -2,13 +2,15 @@
 // Licensed under the MIT License.
 
 import { cloneDeep, isEqual, uniq } from 'lodash';
-import { Event, EventEmitter } from 'vscode';
+import { Event, EventEmitter, Uri } from 'vscode';
 import { traceVerbose } from '../../../../logging';
+import { isParentPath } from '../../../common/externalDependencies';
 import { PythonEnvKind } from '../../info';
 import { areSameEnv } from '../../info/env';
 import { getPrioritizedEnvKinds } from '../../info/envKind';
 import {
     BasicEnvInfo,
+    ICompositeLocator,
     ILocator,
     IPythonEnvsIterator,
     isProgressEvent,
@@ -22,7 +24,7 @@ import { PythonEnvsChangedEvent } from '../../watcher';
 /**
  * Combines duplicate environments received from the incoming locator into one and passes on unique environments
  */
-export class PythonEnvsReducer implements ILocator<BasicEnvInfo> {
+export class PythonEnvsReducer implements ICompositeLocator<BasicEnvInfo> {
     public get onChanged(): Event<PythonEnvsChangedEvent> {
         return this.parentLocator.onChanged;
     }
@@ -50,7 +52,6 @@ async function* iterEnvsIterator(
 
     if (iterator.onUpdated !== undefined) {
         const listener = iterator.onUpdated((event) => {
-            state.pending += 1;
             if (isProgressEvent(event)) {
                 if (event.stage === ProgressReportStage.discoveryFinished) {
                     state.done = true;
@@ -62,7 +63,7 @@ async function* iterEnvsIterator(
                 throw new Error(
                     'Unsupported behavior: `undefined` environment updates are not supported from downstream locators in reducer',
                 );
-            } else if (seen[event.index] !== undefined) {
+            } else if (event.index !== undefined && seen[event.index] !== undefined) {
                 const oldEnv = seen[event.index];
                 seen[event.index] = event.update;
                 didUpdate.fire({ index: event.index, old: oldEnv, update: event.update });
@@ -128,6 +129,7 @@ function checkIfFinishedAndNotify(
     if (state.done && state.pending === 0) {
         didUpdate.fire({ stage: ProgressReportStage.discoveryFinished });
         didUpdate.dispose();
+        traceVerbose(`Finished with environment reducer`);
     }
 }
 
@@ -135,7 +137,22 @@ function resolveEnvCollision(oldEnv: BasicEnvInfo, newEnv: BasicEnvInfo): BasicE
     const [env] = sortEnvInfoByPriority(oldEnv, newEnv);
     const merged = cloneDeep(env);
     merged.source = uniq((oldEnv.source ?? []).concat(newEnv.source ?? []));
+    merged.searchLocation = getMergedSearchLocation(oldEnv, newEnv);
     return merged;
+}
+
+function getMergedSearchLocation(oldEnv: BasicEnvInfo, newEnv: BasicEnvInfo): Uri | undefined {
+    if (oldEnv.searchLocation && newEnv.searchLocation) {
+        // Choose the deeper project path of the two, as that can be used to signify
+        // that the environment is related to both the projects.
+        if (isParentPath(oldEnv.searchLocation.fsPath, newEnv.searchLocation.fsPath)) {
+            return oldEnv.searchLocation;
+        }
+        if (isParentPath(newEnv.searchLocation.fsPath, oldEnv.searchLocation.fsPath)) {
+            return newEnv.searchLocation;
+        }
+    }
+    return oldEnv.searchLocation ?? newEnv.searchLocation;
 }
 
 /**

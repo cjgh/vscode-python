@@ -4,8 +4,8 @@
 'use strict';
 
 import { inject, injectable } from 'inversify';
+import { l10n } from 'vscode';
 import { getExperimentationService, IExperimentationService, TargetPopulation } from 'vscode-tas-client';
-import * as nls from 'vscode-nls';
 import { traceLog } from '../../logging';
 import { sendTelemetryEvent } from '../../telemetry';
 import { EventName } from '../../telemetry/constants';
@@ -13,8 +13,6 @@ import { IApplicationEnvironment, IWorkspaceService } from '../application/types
 import { PVSC_EXTENSION_ID } from '../constants';
 import { IExperimentService, IPersistentStateFactory } from '../types';
 import { ExperimentationTelemetry } from './telemetry';
-
-const localize: nls.LocalizeFunc = nls.loadMessageBundle();
 
 const EXP_MEMENTO_KEY = 'VSCode.ABExp.FeatureData';
 const EXP_CONFIG_ID = 'vscode';
@@ -65,8 +63,8 @@ export class ExperimentService implements IExperimentService {
         }
 
         let targetPopulation: TargetPopulation;
-
-        if (this.appEnvironment.extensionChannel === 'insiders') {
+        // if running in VS Code Insiders, use the Insiders target population
+        if (this.appEnvironment.channel === 'insiders') {
             targetPopulation = TargetPopulation.Insiders;
         } else {
             targetPopulation = TargetPopulation.Public;
@@ -134,7 +132,7 @@ export class ExperimentService implements IExperimentService {
         // it means that the value for this experiment was not found on the server.
         const treatmentVariable = this.experimentationService.getTreatmentVariable(EXP_CONFIG_ID, experiment);
 
-        return treatmentVariable !== undefined;
+        return treatmentVariable === true;
     }
 
     public async getExperimentValue<T extends boolean | number | string>(experiment: string): Promise<T | undefined> {
@@ -164,7 +162,7 @@ export class ExperimentService implements IExperimentService {
 
         if (this._optOutFrom.includes('All')) {
             // We prioritize opt out first
-            traceLog(localize('Experiments.optedOutOf', "Experiment '{0}' is inactive", 'All'));
+            traceLog(l10n.t("Experiment '{0}' is inactive", 'All'));
 
             // Since we are in the Opt Out all case, this means when checking for experiment we
             // short circuit and return. So, printing out additional experiment info might cause
@@ -173,7 +171,7 @@ export class ExperimentService implements IExperimentService {
         }
         if (this._optInto.includes('All')) {
             // Only if 'All' is not in optOut then check if it is in Opt In.
-            traceLog(localize('Experiments.inGroup', "Experiment '{0}' is active", 'All'));
+            traceLog(l10n.t("Experiment '{0}' is active", 'All'));
 
             // Similar to the opt out case. If user is opting into to all experiments we short
             // circuit the experiment checks. So, skip printing any additional details to the logs.
@@ -184,14 +182,14 @@ export class ExperimentService implements IExperimentService {
         this._optOutFrom
             .filter((exp) => exp !== 'All' && exp.toLowerCase().startsWith('python'))
             .forEach((exp) => {
-                traceLog(localize('Experiments.manuallyOptedOutOf', "Experiment '{0}' is inactive", exp));
+                traceLog(l10n.t("Experiment '{0}' is inactive", exp));
             });
 
         // Log experiments that users manually opt into, these are experiments which are added using the exp framework.
         this._optInto
             .filter((exp) => exp !== 'All' && exp.toLowerCase().startsWith('python'))
             .forEach((exp) => {
-                traceLog(localize('Experiments.manuallyOptIntoExperiments', "Experiment '{0}' is active", exp));
+                traceLog(l10n.t("Experiment '{0}' is active", exp));
             });
 
         if (!experimentsDisabled) {
@@ -204,7 +202,7 @@ export class ExperimentService implements IExperimentService {
                     !this._optOutFrom.includes(exp) &&
                     !this._optInto.includes(exp)
                 ) {
-                    traceLog(localize('Experiments.autoOptIntoExperiments', "Experiment '{0}' is active", exp));
+                    traceLog(l10n.t("Experiment '{0}' is active", exp));
                 }
             });
         }
@@ -249,8 +247,10 @@ function sendOptInOptOutTelemetry(optedIn: string[], optedOut: string[], package
     const sanitizedOptedIn = optedIn.filter((exp) => optedInEnumValues.includes(exp));
     const sanitizedOptedOut = optedOut.filter((exp) => optedOutEnumValues.includes(exp));
 
+    JSON.stringify(sanitizedOptedIn.sort());
+
     sendTelemetryEvent(EventName.PYTHON_EXPERIMENTS_OPT_IN_OPT_OUT_SETTINGS, undefined, {
-        optedInto: sanitizedOptedIn,
-        optedOutFrom: sanitizedOptedOut,
+        optedInto: JSON.stringify(sanitizedOptedIn.sort()),
+        optedOutFrom: JSON.stringify(sanitizedOptedOut.sort()),
     });
 }

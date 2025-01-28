@@ -3,7 +3,7 @@
 
 'use strict';
 
-import { inject, injectable, optional } from 'inversify';
+import { inject, injectable } from 'inversify';
 import * as querystring from 'querystring';
 import { env, UIKind } from 'vscode';
 import { IApplicationEnvironment, IApplicationShell } from '../common/application/types';
@@ -37,8 +37,8 @@ export class ExtensionSurveyPrompt implements IExtensionSingleActivationService 
         @inject(IExperimentService) private experiments: IExperimentService,
         @inject(IApplicationEnvironment) private appEnvironment: IApplicationEnvironment,
         @inject(IPlatformService) private platformService: IPlatformService,
-        @optional() private sampleSizePerOneHundredUsers: number = 10,
-        @optional() private waitTimeToShowSurvey: number = WAIT_TIME_TO_SHOW_SURVEY,
+        private sampleSizePerOneHundredUsers: number = 10,
+        private waitTimeToShowSurvey: number = WAIT_TIME_TO_SHOW_SURVEY,
     ) {}
 
     public async activate(): Promise<void> {
@@ -83,10 +83,10 @@ export class ExtensionSurveyPrompt implements IExtensionSingleActivationService 
     @traceDecoratorError('Failed to display prompt for extension survey')
     public async showSurvey() {
         const prompts = [ExtensionSurveyBanner.bannerLabelYes, ExtensionSurveyBanner.maybeLater, Common.doNotShowAgain];
-        const telemetrySelections: ['Yes', 'Maybe later', 'Do not show again'] = [
+        const telemetrySelections: ['Yes', 'Maybe later', "Don't show again"] = [
             'Yes',
             'Maybe later',
-            'Do not show again',
+            "Don't show again",
         ];
         const selection = await this.appShell.showInformationMessage(ExtensionSurveyBanner.bannerMessage, ...prompts);
         sendTelemetryEvent(EventName.EXTENSION_SURVEY_PROMPT, undefined, {

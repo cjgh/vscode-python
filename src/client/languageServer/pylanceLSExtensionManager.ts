@@ -5,7 +5,6 @@ import { promptForPylanceInstall } from '../activation/common/languageServerChan
 import { NodeLanguageServerAnalysisOptions } from '../activation/node/analysisOptions';
 import { NodeLanguageClientFactory } from '../activation/node/languageClientFactory';
 import { NodeLanguageServerProxy } from '../activation/node/languageServerProxy';
-import { LspNotebooksExperiment } from '../activation/node/lspNotebooksExperiment';
 import { NodeLanguageServerManager } from '../activation/node/manager';
 import { ILanguageServerOutputChannel } from '../activation/types';
 import { IApplicationShell, ICommandManager, IWorkspaceService } from '../common/application/types';
@@ -25,14 +24,12 @@ import { IInterpreterService } from '../interpreter/contracts';
 import { IServiceContainer } from '../ioc/types';
 import { traceLog } from '../logging';
 import { PythonEnvironment } from '../pythonEnvironments/info';
-import { LanguageServerCapabilities } from './languageServerCapabilities';
 import { ILanguageServerExtensionManager } from './types';
 
-export class PylanceLSExtensionManager extends LanguageServerCapabilities
-    implements IDisposable, ILanguageServerExtensionManager {
-    serverManager: NodeLanguageServerManager;
+export class PylanceLSExtensionManager implements IDisposable, ILanguageServerExtensionManager {
+    private serverProxy: NodeLanguageServerProxy;
 
-    serverProxy: NodeLanguageServerProxy;
+    serverManager: NodeLanguageServerManager;
 
     clientFactory: NodeLanguageClientFactory;
 
@@ -51,15 +48,8 @@ export class PylanceLSExtensionManager extends LanguageServerCapabilities
         fileSystem: IFileSystem,
         private readonly extensions: IExtensions,
         readonly applicationShell: IApplicationShell,
-        lspNotebooksExperiment: LspNotebooksExperiment,
     ) {
-        super();
-
-        this.analysisOptions = new NodeLanguageServerAnalysisOptions(
-            outputChannel,
-            workspaceService,
-            lspNotebooksExperiment,
-        );
+        this.analysisOptions = new NodeLanguageServerAnalysisOptions(outputChannel, workspaceService);
         this.clientFactory = new NodeLanguageClientFactory(fileSystem, extensions);
         this.serverProxy = new NodeLanguageServerProxy(
             this.clientFactory,

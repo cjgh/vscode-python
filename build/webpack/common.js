@@ -20,10 +20,7 @@ exports.nodeModulesToExternalize = [
     'unicode/category/Mc',
     'unicode/category/Nd',
     'unicode/category/Pc',
-    'request',
-    'request-progress',
     'source-map-support',
-    'diff-match-patch',
     'sudo-prompt',
     'node-stream-zip',
     'xml2js',
@@ -52,16 +49,3 @@ function getListOfExistingModulesInOutDir() {
     return files.map((filePath) => `./${filePath.slice(0, -3)}`);
 }
 exports.getListOfExistingModulesInOutDir = getListOfExistingModulesInOutDir;
-function getTranlationsLoader() {
-    const loaders = [];
-    if (process.env.DISABLE_TRANSLATIONS !== 'true') {
-        loaders.push({
-            loader: 'vscode-nls-dev/lib/webpack-loader',
-            options: {
-                base: constants.ExtensionRootDir,
-            },
-        });
-    }
-    return loaders;
-}
-exports.getTranlationsLoader = getTranlationsLoader;

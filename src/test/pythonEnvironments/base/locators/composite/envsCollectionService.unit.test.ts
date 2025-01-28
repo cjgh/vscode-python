@@ -1,5 +1,7 @@
 // Copyright (c) Microsoft Corporation. All rights reserved.
 // Licensed under the MIT License.
+/* eslint-disable class-methods-use-this */
+/* eslint-disable @typescript-eslint/no-explicit-any */
 
 import { assert, expect } from 'chai';
 import { cloneDeep } from 'lodash';
@@ -8,32 +10,74 @@ import * as sinon from 'sinon';
 import { EventEmitter, Uri } from 'vscode';
 import { FileChangeType } from '../../../../../client/common/platform/fileSystemWatcher';
 import { createDeferred, createDeferredFromPromise, sleep } from '../../../../../client/common/utils/async';
-import * as proposedApi from '../../../../../client/proposedApi';
 import { PythonEnvInfo, PythonEnvKind } from '../../../../../client/pythonEnvironments/base/info';
-import { buildEnvInfo } from '../../../../../client/pythonEnvironments/base/info/env';
+import { areSameEnv, buildEnvInfo } from '../../../../../client/pythonEnvironments/base/info/env';
 import {
     ProgressNotificationEvent,
     ProgressReportStage,
     PythonEnvUpdatedEvent,
 } from '../../../../../client/pythonEnvironments/base/locator';
-import {
-    createCollectionCache,
-    PythonEnvLatestInfo,
-} from '../../../../../client/pythonEnvironments/base/locators/composite/envsCollectionCache';
+import { createCollectionCache } from '../../../../../client/pythonEnvironments/base/locators/composite/envsCollectionCache';
 import { EnvsCollectionService } from '../../../../../client/pythonEnvironments/base/locators/composite/envsCollectionService';
 import { PythonEnvCollectionChangedEvent } from '../../../../../client/pythonEnvironments/base/watcher';
 import * as externalDependencies from '../../../../../client/pythonEnvironments/common/externalDependencies';
 import { noop } from '../../../../core';
 import { TEST_LAYOUT_ROOT } from '../../../common/commonTestConstants';
 import { SimpleLocator } from '../../common';
-import { assertEnvEqual, assertEnvsEqual } from '../envTestUtils';
+import { assertEnvEqual, assertEnvsEqual, createFile, deleteFile } from '../envTestUtils';
+import { OSType, getOSType } from '../../../../common';
+import * as nativeFinder from '../../../../../client/pythonEnvironments/base/locators/common/nativePythonFinder';
+
+class MockNativePythonFinder implements nativeFinder.NativePythonFinder {
+    find(_searchPath: string): Promise<nativeFinder.NativeEnvInfo[]> {
+        throw new Error('Method not implemented.');
+    }
+
+    getCondaInfo(): Promise<nativeFinder.NativeCondaInfo> {
+        throw new Error('Method not implemented.');
+    }
+
+    resolve(_executable: string): Promise<nativeFinder.NativeEnvInfo> {
+        throw new Error('Method not implemented.');
+    }
+
+    refresh(): AsyncIterable<nativeFinder.NativeEnvInfo> {
+        const envs: nativeFinder.NativeEnvInfo[] = [];
+        return (async function* () {
+            for (const env of envs) {
+                yield env;
+            }
+        })();
+    }
+
+    dispose() {
+        /** noop */
+    }
+}
 
 suite('Python envs locator - Environments Collection', async () => {
+    let getNativePythonFinderStub: sinon.SinonStub;
     let collectionService: EnvsCollectionService;
     let storage: PythonEnvInfo[];
-    let reportInterpretersChangedStub: sinon.SinonStub;
 
     const updatedName = 'updatedName';
+    const pathToCondaPython = getOSType() === OSType.Windows ? 'python.exe' : path.join('bin', 'python');
+    const condaEnvWithoutPython = createEnv(
+        'python',
+        undefined,
+        undefined,
+        path.join(TEST_LAYOUT_ROOT, 'envsWithoutPython', 'condaLackingPython'),
+        PythonEnvKind.Conda,
+        path.join(TEST_LAYOUT_ROOT, 'envsWithoutPython', 'condaLackingPython', pathToCondaPython),
+    );
+    const condaEnvWithPython = createEnv(
+        path.join(TEST_LAYOUT_ROOT, 'envsWithoutPython', 'condaLackingPython', pathToCondaPython),
+        undefined,
+        undefined,
+        path.join(TEST_LAYOUT_ROOT, 'envsWithoutPython', 'condaLackingPython'),
+        PythonEnvKind.Conda,
+        path.join(TEST_LAYOUT_ROOT, 'envsWithoutPython', 'condaLackingPython', pathToCondaPython),
+    );
 
     function applyChangeEventToEnvList(envs: PythonEnvInfo[], event: PythonEnvCollectionChangedEvent) {
         const env = event.old ?? event.new;
@@ -54,8 +98,20 @@ suite('Python envs locator - Environments Collection', async () => {
         return envs;
     }
 
-    function createEnv(executable: string, searchLocation?: Uri, name?: string) {
-        return buildEnvInfo({ executable, searchLocation, name });
+    function createEnv(
+        executable: string,
+        searchLocation?: Uri,
+        name?: string,
+        location?: string,
+        kind?: PythonEnvKind,
+        id?: string,
+    ) {
+        const env = buildEnvInfo({ executable, searchLocation, name, location, kind });
+        env.id = id ?? env.id;
+        env.version.major = 3;
+        env.version.minor = 10;
+        env.version.micro = 10;
+        return env;
     }
 
     function getLocatorEnvs() {
@@ -72,14 +128,18 @@ suite('Python envs locator - Environments Collection', async () => {
     }
 
     function getValidCachedEnvs() {
+        const cachedEnvForWorkspace = createEnv(
+            path.join(TEST_LAYOUT_ROOT, 'workspace', 'folder1', 'win1', 'python.exe'),
+            Uri.file(path.join(TEST_LAYOUT_ROOT, 'workspace', 'folder1')),
+        );
         const fakeLocalAppDataPath = path.join(TEST_LAYOUT_ROOT, 'storeApps');
         const envCached1 = createEnv(path.join(fakeLocalAppDataPath, 'Microsoft', 'WindowsApps', 'python.exe'));
         const envCached2 = createEnv(
             path.join(TEST_LAYOUT_ROOT, 'pipenv', 'project1', '.venv', 'Scripts', 'python.exe'),
             Uri.file(TEST_LAYOUT_ROOT),
         );
-        const envCached3 = createEnv('python');
-        return [envCached1, envCached2, envCached3];
+        const envCached3 = condaEnvWithoutPython;
+        return [cachedEnvForWorkspace, envCached1, envCached2, envCached3];
     }
 
     function getCachedEnvs() {
@@ -87,10 +147,11 @@ suite('Python envs locator - Environments Collection', async () => {
         return [...getValidCachedEnvs(), envCached3];
     }
 
-    function getExpectedEnvs(doNotIncludeCached?: boolean) {
-        const fakeLocalAppDataPath = path.join(TEST_LAYOUT_ROOT, 'storeApps');
-        const envCached1 = createEnv(path.join(fakeLocalAppDataPath, 'Microsoft', 'WindowsApps', 'python.exe'));
-        const envCached2 = createEnv('python');
+    function getExpectedEnvs() {
+        const cachedEnvForWorkspace = createEnv(
+            path.join(TEST_LAYOUT_ROOT, 'workspace', 'folder1', 'win1', 'python.exe'),
+            Uri.file(path.join(TEST_LAYOUT_ROOT, 'workspace', 'folder1')),
+        );
         const env1 = createEnv(path.join(TEST_LAYOUT_ROOT, 'conda1', 'python.exe'), undefined, updatedName);
         const env2 = createEnv(
             path.join(TEST_LAYOUT_ROOT, 'pipenv', 'project1', '.venv', 'Scripts', 'python.exe'),
@@ -102,32 +163,26 @@ suite('Python envs locator - Environments Collection', async () => {
             undefined,
             updatedName,
         );
-        if (doNotIncludeCached) {
-            return [env1, env2, env3].map((e: PythonEnvLatestInfo) => {
-                e.hasLatestInfo = true;
-                return e;
-            });
-        }
-        return [envCached1, envCached2, env1, env2, env3].map((e: PythonEnvLatestInfo) => {
-            e.hasLatestInfo = true;
-            return e;
-        });
+        // Do not include cached envs which were not yielded by the locator, unless it belongs to some workspace.
+        return [cachedEnvForWorkspace, env1, env2, env3];
     }
 
     setup(async () => {
+        getNativePythonFinderStub = sinon.stub(nativeFinder, 'getNativePythonFinder');
+        getNativePythonFinderStub.returns(new MockNativePythonFinder());
         storage = [];
         const parentLocator = new SimpleLocator(getLocatorEnvs());
         const cache = await createCollectionCache({
-            load: async () => getCachedEnvs(),
+            get: () => getCachedEnvs(),
             store: async (envs) => {
                 storage = envs;
             },
         });
-        collectionService = new EnvsCollectionService(cache, parentLocator);
-        reportInterpretersChangedStub = sinon.stub(proposedApi, 'reportInterpretersChanged');
+        collectionService = new EnvsCollectionService(cache, parentLocator, false);
     });
 
-    teardown(() => {
+    teardown(async () => {
+        await deleteFile(condaEnvWithPython.executable.filename); //  Restore to the original state
         sinon.restore();
     });
 
@@ -143,99 +198,6 @@ suite('Python envs locator - Environments Collection', async () => {
             envs,
             getValidCachedEnvs().filter((e) => !e.searchLocation),
         );
-    });
-
-    test('triggerRefresh() refreshes the collection and storage with any new environments', async () => {
-        const onUpdated = new EventEmitter<PythonEnvUpdatedEvent | ProgressNotificationEvent>();
-        const locatedEnvs = getLocatorEnvs();
-        const parentLocator = new SimpleLocator(locatedEnvs, {
-            onUpdated: onUpdated.event,
-            after: async () => {
-                locatedEnvs.forEach((env, index) => {
-                    const update = cloneDeep(env);
-                    update.name = updatedName;
-                    onUpdated.fire({ index, update });
-                });
-                onUpdated.fire({ index: locatedEnvs.length - 1, update: undefined });
-                // It turns out the last env is invalid, ensure it does not appear in the final result.
-                onUpdated.fire({ stage: ProgressReportStage.discoveryFinished });
-            },
-        });
-        const cache = await createCollectionCache({
-            load: async () => getCachedEnvs(),
-            store: async (e) => {
-                storage = e;
-            },
-        });
-        collectionService = new EnvsCollectionService(cache, parentLocator);
-
-        await collectionService.triggerRefresh();
-        const envs = collectionService.getEnvs();
-
-        const expected = getExpectedEnvs();
-        assertEnvsEqual(envs, expected);
-        assertEnvsEqual(storage, expected);
-
-        const eventData = [
-            {
-                path: path.join(TEST_LAYOUT_ROOT, 'doesNotExist'),
-                type: 'remove',
-            },
-            {
-                path: path.join(TEST_LAYOUT_ROOT, 'conda1', 'python.exe'),
-                type: 'add',
-            },
-            {
-                path: path.join(
-                    TEST_LAYOUT_ROOT,
-                    'pyenv2',
-                    '.pyenv',
-                    'pyenv-win',
-                    'versions',
-                    '3.6.9',
-                    'bin',
-                    'python.exe',
-                ),
-                type: 'add',
-            },
-            {
-                path: path.join(TEST_LAYOUT_ROOT, 'virtualhome', '.venvs', 'win1', 'python.exe'),
-                type: 'add',
-            },
-            {
-                path: path.join(TEST_LAYOUT_ROOT, 'conda1', 'python.exe'),
-                type: 'update',
-            },
-            {
-                path: path.join(TEST_LAYOUT_ROOT, 'pipenv', 'project1', '.venv', 'Scripts', 'python.exe'),
-                type: 'update',
-            },
-            {
-                path: path.join(
-                    TEST_LAYOUT_ROOT,
-                    'pyenv2',
-                    '.pyenv',
-                    'pyenv-win',
-                    'versions',
-                    '3.6.9',
-                    'bin',
-                    'python.exe',
-                ),
-                type: 'update',
-            },
-            {
-                path: path.join(TEST_LAYOUT_ROOT, 'virtualhome', '.venvs', 'win1', 'python.exe'),
-                type: 'update',
-            },
-            {
-                path: path.join(TEST_LAYOUT_ROOT, 'virtualhome', '.venvs', 'win1', 'python.exe'),
-                type: 'remove',
-            },
-        ];
-        eventData.forEach((d) => {
-            sinon.assert.calledWithExactly(reportInterpretersChangedStub, [d]);
-        });
-        sinon.assert.callCount(reportInterpretersChangedStub, eventData.length);
     });
 
     test('If `ifNotTriggerredAlready` option is set and a refresh for query is already triggered, triggerRefresh() does not trigger a refresh', async () => {
@@ -257,12 +219,12 @@ suite('Python envs locator - Environments Collection', async () => {
             },
         });
         const cache = await createCollectionCache({
-            load: async () => getCachedEnvs(),
+            get: () => getCachedEnvs(),
             store: async (e) => {
                 storage = e;
             },
         });
-        collectionService = new EnvsCollectionService(cache, parentLocator);
+        collectionService = new EnvsCollectionService(cache, parentLocator, false);
 
         await collectionService.triggerRefresh(undefined);
         await collectionService.triggerRefresh(undefined, { ifNotTriggerredAlready: true });
@@ -291,12 +253,12 @@ suite('Python envs locator - Environments Collection', async () => {
             },
         });
         const cache = await createCollectionCache({
-            load: async () => cachedEnvs,
+            get: () => cachedEnvs,
             store: async (e) => {
                 storage = e;
             },
         });
-        collectionService = new EnvsCollectionService(cache, parentLocator);
+        collectionService = new EnvsCollectionService(cache, parentLocator, false);
 
         const events: PythonEnvCollectionChangedEvent[] = [];
         collectionService.onChanged((e) => {
@@ -312,70 +274,9 @@ suite('Python envs locator - Environments Collection', async () => {
         });
         const expected = getExpectedEnvs();
         assertEnvsEqual(envs, expected);
-
-        const eventData = [
-            {
-                path: path.join(TEST_LAYOUT_ROOT, 'doesNotExist'),
-                type: 'remove',
-            },
-            {
-                path: path.join(TEST_LAYOUT_ROOT, 'conda1', 'python.exe'),
-                type: 'add',
-            },
-            {
-                path: path.join(
-                    TEST_LAYOUT_ROOT,
-                    'pyenv2',
-                    '.pyenv',
-                    'pyenv-win',
-                    'versions',
-                    '3.6.9',
-                    'bin',
-                    'python.exe',
-                ),
-                type: 'add',
-            },
-            {
-                path: path.join(TEST_LAYOUT_ROOT, 'virtualhome', '.venvs', 'win1', 'python.exe'),
-                type: 'add',
-            },
-            {
-                path: path.join(TEST_LAYOUT_ROOT, 'conda1', 'python.exe'),
-                type: 'update',
-            },
-            {
-                path: path.join(TEST_LAYOUT_ROOT, 'pipenv', 'project1', '.venv', 'Scripts', 'python.exe'),
-                type: 'update',
-            },
-            {
-                path: path.join(
-                    TEST_LAYOUT_ROOT,
-                    'pyenv2',
-                    '.pyenv',
-                    'pyenv-win',
-                    'versions',
-                    '3.6.9',
-                    'bin',
-                    'python.exe',
-                ),
-                type: 'update',
-            },
-            {
-                path: path.join(TEST_LAYOUT_ROOT, 'virtualhome', '.venvs', 'win1', 'python.exe'),
-                type: 'update',
-            },
-            {
-                path: path.join(TEST_LAYOUT_ROOT, 'virtualhome', '.venvs', 'win1', 'python.exe'),
-                type: 'remove',
-            },
-        ];
-        eventData.forEach((d) => {
-            sinon.assert.calledWithExactly(reportInterpretersChangedStub, [d]);
-        });
-        sinon.assert.callCount(reportInterpretersChangedStub, eventData.length);
     });
 
-    test('If `clearCache` option is set triggerRefresh() clears the cache before refreshing and fires expected events', async () => {
+    test("Ensure update events are not fired if an environment isn't actually updated", async () => {
         const onUpdated = new EventEmitter<PythonEnvUpdatedEvent | ProgressNotificationEvent>();
         const locatedEnvs = getLocatorEnvs();
         const cachedEnvs = getCachedEnvs();
@@ -393,29 +294,81 @@ suite('Python envs locator - Environments Collection', async () => {
             },
         });
         const cache = await createCollectionCache({
-            load: async () => cachedEnvs,
+            get: () => cachedEnvs,
             store: async (e) => {
                 storage = e;
             },
         });
-        collectionService = new EnvsCollectionService(cache, parentLocator);
+        collectionService = new EnvsCollectionService(cache, parentLocator, false);
+
+        let events: PythonEnvCollectionChangedEvent[] = [];
+        collectionService.onChanged((e) => {
+            events.push(e);
+        });
+
+        await collectionService.triggerRefresh();
+        expect(events.length).to.not.equal(0, 'Atleast event should be fired');
+        const envs = collectionService.getEnvs();
+
+        // Trigger a refresh again.
+        events = [];
+        await collectionService.triggerRefresh();
+        // Filter out the events which are related to envs in the cache, we expect no such events to be fired as no
+        // envs were updated.
+        events = events.filter((e) =>
+            envs.some((env) => {
+                const eventEnv = e.old ?? e.new;
+                if (!eventEnv) {
+                    return true;
+                }
+                return areSameEnv(eventEnv, env);
+            }),
+        );
+        expect(events.length).to.equal(0, 'Do not fire additional events as envs have not updated');
+    });
+
+    test('triggerRefresh() refreshes the collection with any new envs & removes cached envs if not relevant', async () => {
+        const onUpdated = new EventEmitter<PythonEnvUpdatedEvent | ProgressNotificationEvent>();
+        const locatedEnvs = getLocatorEnvs();
+        const cachedEnvs = getCachedEnvs();
+        const parentLocator = new SimpleLocator(locatedEnvs, {
+            onUpdated: onUpdated.event,
+            after: async () => {
+                locatedEnvs.forEach((env, index) => {
+                    const update = cloneDeep(env);
+                    update.name = updatedName;
+                    onUpdated.fire({ index, update });
+                });
+                onUpdated.fire({ index: locatedEnvs.length - 1, update: undefined });
+                // It turns out the last env is invalid, ensure it does not appear in the final result.
+                onUpdated.fire({ stage: ProgressReportStage.discoveryFinished });
+            },
+        });
+        const cache = await createCollectionCache({
+            get: () => cachedEnvs,
+            store: async (e) => {
+                storage = e;
+            },
+        });
+        collectionService = new EnvsCollectionService(cache, parentLocator, false);
 
         const events: PythonEnvCollectionChangedEvent[] = [];
         collectionService.onChanged((e) => {
             events.push(e);
         });
 
-        await collectionService.triggerRefresh(undefined, { clearCache: true });
+        await collectionService.triggerRefresh();
 
         let envs = cachedEnvs;
         // Ensure when all the events are applied to the original list in sequence, the final list is as expected.
         events.forEach((e) => {
             envs = applyChangeEventToEnvList(envs, e);
         });
-        const expected = getExpectedEnvs(true);
+        const expected = getExpectedEnvs();
         assertEnvsEqual(envs, expected);
         const queriedEnvs = collectionService.getEnvs();
         assertEnvsEqual(queriedEnvs, expected);
+        assertEnvsEqual(storage, expected);
     });
 
     test('Ensure progress stage updates are emitted correctly and refresh promises correct track promise for each stage', async () => {
@@ -445,12 +398,12 @@ suite('Python envs locator - Environments Collection', async () => {
             },
         });
         const cache = await createCollectionCache({
-            load: async () => cachedEnvs,
+            get: () => cachedEnvs,
             store: async (e) => {
                 storage = e;
             },
         });
-        collectionService = new EnvsCollectionService(cache, parentLocator);
+        collectionService = new EnvsCollectionService(cache, parentLocator, false);
         let stage: ProgressReportStage | undefined;
         collectionService.onProgress((e) => {
             stage = e.stage;
@@ -502,59 +455,15 @@ suite('Python envs locator - Environments Collection', async () => {
         expect(refreshPromise).to.equal(undefined, 'All paths discovered stage not applicable if a query is provided');
     });
 
-    test('refreshPromise() correctly indicates the status of the refresh', async () => {
-        const parentLocator = new SimpleLocator(getLocatorEnvs());
-        const cache = await createCollectionCache({
-            load: async () => getCachedEnvs(),
-            store: async () => noop(),
-        });
-        collectionService = new EnvsCollectionService(cache, parentLocator);
-
-        await collectionService.triggerRefresh();
-
-        const eventData = [
-            {
-                path: path.join(TEST_LAYOUT_ROOT, 'doesNotExist'),
-                type: 'remove',
-            },
-            {
-                path: path.join(TEST_LAYOUT_ROOT, 'conda1', 'python.exe'),
-                type: 'add',
-            },
-            {
-                path: path.join(
-                    TEST_LAYOUT_ROOT,
-                    'pyenv2',
-                    '.pyenv',
-                    'pyenv-win',
-                    'versions',
-                    '3.6.9',
-                    'bin',
-                    'python.exe',
-                ),
-                type: 'add',
-            },
-            {
-                path: path.join(TEST_LAYOUT_ROOT, 'virtualhome', '.venvs', 'win1', 'python.exe'),
-                type: 'add',
-            },
-        ];
-        eventData.forEach((d) => {
-            sinon.assert.calledWithExactly(reportInterpretersChangedStub, [d]);
-        });
-        sinon.assert.callCount(reportInterpretersChangedStub, eventData.length);
-    });
-
     test('resolveEnv() uses cache if complete and up to date info is available', async () => {
         const resolvedViaLocator = buildEnvInfo({ executable: 'Resolved via locator' });
         const cachedEnvs = getCachedEnvs();
-        const env: PythonEnvLatestInfo = cachedEnvs[0];
+        const env = cachedEnvs[0];
         env.executable.ctime = 100;
         env.executable.mtime = 100;
         sinon.stub(externalDependencies, 'getFileInfo').resolves({ ctime: 100, mtime: 100 });
-        env.hasLatestInfo = true; // Has complete info
         const parentLocator = new SimpleLocator([], {
-            resolve: async (e: PythonEnvInfo) => {
+            resolve: async (e: any) => {
                 if (env.executable.filename === e.executable.filename) {
                     return resolvedViaLocator;
                 }
@@ -562,18 +471,50 @@ suite('Python envs locator - Environments Collection', async () => {
             },
         });
         const cache = await createCollectionCache({
-            load: async () => cachedEnvs,
+            get: () => cachedEnvs,
             store: async () => noop(),
         });
-        collectionService = new EnvsCollectionService(cache, parentLocator);
+        collectionService = new EnvsCollectionService(cache, parentLocator, false);
         const resolved = await collectionService.resolveEnv(env.executable.filename);
         assertEnvEqual(resolved, env);
-        sinon.assert.calledOnce(reportInterpretersChangedStub);
+    });
+
+    test('resolveEnv() does not use cache if complete info is not available', async () => {
+        const resolvedViaLocator = buildEnvInfo({ executable: 'Resolved via locator' });
+        const deferred = createDeferred<void>();
+        const waitDeferred = createDeferred<void>();
+        const locatedEnvs = getLocatorEnvs();
+        const env = locatedEnvs[0];
+        env.executable.ctime = 100;
+        env.executable.mtime = 100;
+        sinon.stub(externalDependencies, 'getFileInfo').resolves({ ctime: 100, mtime: 100 });
+        const parentLocator = new SimpleLocator(locatedEnvs, {
+            after: async () => {
+                waitDeferred.resolve();
+                await deferred.promise;
+            },
+            resolve: async (e: any) => {
+                if (env.executable.filename === e.executable.filename) {
+                    return resolvedViaLocator;
+                }
+                return undefined;
+            },
+        });
+        const cache = await createCollectionCache({
+            get: () => [],
+            store: async () => noop(),
+        });
+        collectionService = new EnvsCollectionService(cache, parentLocator, false);
+        collectionService.triggerRefresh().ignoreErrors();
+        await waitDeferred.promise; // Cache should already contain `env` at this point, although it is not complete.
+        collectionService = new EnvsCollectionService(cache, parentLocator, false);
+        const resolved = await collectionService.resolveEnv(env.executable.filename);
+        assertEnvEqual(resolved, resolvedViaLocator);
     });
 
     test('resolveEnv() uses underlying locator if cache does not have up to date info for env', async () => {
         const cachedEnvs = getCachedEnvs();
-        const env: PythonEnvLatestInfo = cachedEnvs[0];
+        const env = cachedEnvs[0];
         const resolvedViaLocator = buildEnvInfo({
             executable: env.executable.filename,
             sysPrefix: 'Resolved via locator',
@@ -581,9 +522,8 @@ suite('Python envs locator - Environments Collection', async () => {
         env.executable.ctime = 101;
         env.executable.mtime = 90;
         sinon.stub(externalDependencies, 'getFileInfo').resolves({ ctime: 100, mtime: 100 });
-        env.hasLatestInfo = true; // Has complete info
         const parentLocator = new SimpleLocator([], {
-            resolve: async (e: PythonEnvInfo) => {
+            resolve: async (e: any) => {
                 if (env.executable.filename === e.executable.filename) {
                     return resolvedViaLocator;
                 }
@@ -591,57 +531,18 @@ suite('Python envs locator - Environments Collection', async () => {
             },
         });
         const cache = await createCollectionCache({
-            load: async () => cachedEnvs,
+            get: () => cachedEnvs,
             store: async () => noop(),
         });
-        collectionService = new EnvsCollectionService(cache, parentLocator);
+        collectionService = new EnvsCollectionService(cache, parentLocator, false);
         const resolved = await collectionService.resolveEnv(env.executable.filename);
         assertEnvEqual(resolved, resolvedViaLocator);
-        sinon.assert.calledOnce(reportInterpretersChangedStub);
-    });
-
-    test('resolveEnv() uses underlying locator if cache does not have complete info for env', async () => {
-        const resolvedViaLocator = buildEnvInfo({ executable: 'Resolved via locator' });
-        const cachedEnvs = getCachedEnvs();
-        const env: PythonEnvLatestInfo = cachedEnvs[0];
-        env.hasLatestInfo = false; // Does not have complete info
-        const parentLocator = new SimpleLocator([], {
-            resolve: async (e: PythonEnvInfo) => {
-                if (env.executable.filename === e.executable.filename) {
-                    return resolvedViaLocator;
-                }
-                return undefined;
-            },
-        });
-        const cache = await createCollectionCache({
-            load: async () => cachedEnvs,
-            store: async () => noop(),
-        });
-        collectionService = new EnvsCollectionService(cache, parentLocator);
-        const resolved = await collectionService.resolveEnv(env.executable.filename);
-        assertEnvEqual(resolved, resolvedViaLocator);
-
-        const eventData = [
-            {
-                path: path.join(TEST_LAYOUT_ROOT, 'doesNotExist'),
-                type: 'remove',
-            },
-
-            {
-                path: 'Resolved via locator',
-                type: 'add',
-            },
-        ];
-        eventData.forEach((d) => {
-            sinon.assert.calledWithExactly(reportInterpretersChangedStub, [d]);
-        });
-        sinon.assert.callCount(reportInterpretersChangedStub, eventData.length);
     });
 
     test('resolveEnv() adds env to cache after resolving using downstream locator', async () => {
         const resolvedViaLocator = buildEnvInfo({ executable: 'Resolved via locator' });
         const parentLocator = new SimpleLocator([], {
-            resolve: async (e: PythonEnvInfo) => {
+            resolve: async (e: any) => {
                 if (resolvedViaLocator.executable.filename === e.executable.filename) {
                     return resolvedViaLocator;
                 }
@@ -649,19 +550,56 @@ suite('Python envs locator - Environments Collection', async () => {
             },
         });
         const cache = await createCollectionCache({
-            load: async () => [],
+            get: () => [],
             store: async () => noop(),
         });
-        collectionService = new EnvsCollectionService(cache, parentLocator);
-        const resolved: PythonEnvLatestInfo | undefined = await collectionService.resolveEnv(
-            resolvedViaLocator.executable.filename,
-        );
+        collectionService = new EnvsCollectionService(cache, parentLocator, false);
+        const resolved = await collectionService.resolveEnv(resolvedViaLocator.executable.filename);
         const envs = collectionService.getEnvs();
-        expect(resolved?.hasLatestInfo).to.equal(true);
         assertEnvsEqual(envs, [resolved]);
-        sinon.assert.calledOnceWithExactly(reportInterpretersChangedStub, [
-            { path: resolved?.executable.filename, type: 'add' },
-        ]);
+    });
+
+    test('resolveEnv() uses underlying locator once conda envs without python get a python installed', async () => {
+        const cachedEnvs = [condaEnvWithoutPython];
+        const parentLocator = new SimpleLocator(
+            [],
+            {
+                resolve: async (e) => {
+                    if (condaEnvWithoutPython.location === (e as string)) {
+                        return condaEnvWithPython;
+                    }
+                    return undefined;
+                },
+            },
+            { resolveAsString: true },
+        );
+        const cache = await createCollectionCache({
+            get: () => cachedEnvs,
+            store: async () => noop(),
+        });
+        collectionService = new EnvsCollectionService(cache, parentLocator, false);
+        let resolved = await collectionService.resolveEnv(condaEnvWithoutPython.location);
+        assertEnvEqual(resolved, condaEnvWithoutPython); // Ensure cache is used to resolve such envs.
+
+        condaEnvWithPython.executable.ctime = 100;
+        condaEnvWithPython.executable.mtime = 100;
+        sinon.stub(externalDependencies, 'getFileInfo').resolves({ ctime: 100, mtime: 100 });
+
+        const events: PythonEnvCollectionChangedEvent[] = [];
+        collectionService.onChanged((e) => {
+            events.push(e);
+        });
+
+        await createFile(condaEnvWithPython.executable.filename); // Install Python into the env
+
+        resolved = await collectionService.resolveEnv(condaEnvWithoutPython.location);
+        assertEnvEqual(resolved, condaEnvWithPython); // Ensure it resolves latest info.
+
+        // Verify conda env without python in cache is replaced with updated info.
+        const envs = collectionService.getEnvs();
+        assertEnvsEqual(envs, [condaEnvWithPython]);
+
+        expect(events.length).to.equal(1, 'Update event should be fired');
     });
 
     test('Ensure events from downstream locators do not trigger new refreshes if a refresh is already scheduled', async () => {
@@ -674,10 +612,10 @@ suite('Python envs locator - Environments Collection', async () => {
             },
         });
         const cache = await createCollectionCache({
-            load: async () => [],
+            get: () => [],
             store: async () => noop(),
         });
-        collectionService = new EnvsCollectionService(cache, parentLocator);
+        collectionService = new EnvsCollectionService(cache, parentLocator, false);
         const events: PythonEnvCollectionChangedEvent[] = [];
         collectionService.onChanged((e) => {
             events.push(e);
@@ -714,7 +652,5 @@ suite('Python envs locator - Environments Collection', async () => {
             events.sort((a, b) => (a.type && b.type ? a.type?.localeCompare(b.type) : 0)),
             downstreamEvents.sort((a, b) => (a.type && b.type ? a.type?.localeCompare(b.type) : 0)),
         );
-
-        sinon.assert.notCalled(reportInterpretersChangedStub);
     });
 });

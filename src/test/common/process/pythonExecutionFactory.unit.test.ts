@@ -13,12 +13,10 @@ import { Uri } from 'vscode';
 
 import { PythonSettings } from '../../../client/common/configSettings';
 import { ConfigurationService } from '../../../client/common/configuration/service';
-import { BufferDecoder } from '../../../client/common/process/decoder';
 import { ProcessLogger } from '../../../client/common/process/logger';
 import { ProcessServiceFactory } from '../../../client/common/process/processFactory';
 import { PythonExecutionFactory } from '../../../client/common/process/pythonExecutionFactory';
 import {
-    IBufferDecoder,
     IProcessLogger,
     IProcessService,
     IProcessServiceFactory,
@@ -28,12 +26,17 @@ import { IConfigurationService, IDisposableRegistry, IInterpreterPathService } f
 import { Architecture } from '../../../client/common/utils/platform';
 import { EnvironmentActivationService } from '../../../client/interpreter/activation/service';
 import { IEnvironmentActivationService } from '../../../client/interpreter/activation/types';
-import { IComponentAdapter, IInterpreterService } from '../../../client/interpreter/contracts';
+import {
+    IActivatedEnvironmentLaunch,
+    IComponentAdapter,
+    IInterpreterService,
+} from '../../../client/interpreter/contracts';
 import { InterpreterService } from '../../../client/interpreter/interpreterService';
 import { ServiceContainer } from '../../../client/ioc/container';
 import { EnvironmentType, PythonEnvironment } from '../../../client/pythonEnvironments/info';
 import { IInterpreterAutoSelectionService } from '../../../client/interpreter/autoSelection/types';
 import { Conda, CONDA_RUN_VERSION } from '../../../client/pythonEnvironments/common/environmentManagers/conda';
+import * as pixi from '../../../client/pythonEnvironments/common/environmentManagers/pixi';
 
 const pythonInterpreter: PythonEnvironment = {
     path: '/foo/bar/python.exe',
@@ -75,7 +78,7 @@ suite('Process - PythonExecutionFactory', () => {
         suite(title(resource, interpreter), () => {
             let factory: PythonExecutionFactory;
             let activationHelper: IEnvironmentActivationService;
-            let bufferDecoder: IBufferDecoder;
+            let activatedEnvironmentLaunch: IActivatedEnvironmentLaunch;
             let processFactory: IProcessServiceFactory;
             let configService: IConfigurationService;
             let processLogger: IProcessLogger;
@@ -85,11 +88,19 @@ suite('Process - PythonExecutionFactory', () => {
             let executionService: typemoq.IMock<IPythonExecutionService>;
             let autoSelection: IInterpreterAutoSelectionService;
             let interpreterPathExpHelper: IInterpreterPathService;
+            let getPixiEnvironmentFromInterpreterStub: sinon.SinonStub;
+            let getPixiStub: sinon.SinonStub;
             const pythonPath = 'path/to/python';
             setup(() => {
                 sinon.stub(Conda, 'getConda').resolves(new Conda('conda'));
                 sinon.stub(Conda.prototype, 'getInterpreterPathForEnvironment').resolves(pythonPath);
-                bufferDecoder = mock(BufferDecoder);
+
+                getPixiEnvironmentFromInterpreterStub = sinon.stub(pixi, 'getPixiEnvironmentFromInterpreter');
+                getPixiEnvironmentFromInterpreterStub.resolves(undefined);
+
+                getPixiStub = sinon.stub(pixi, 'getPixi');
+                getPixiStub.resolves(undefined);
+
                 activationHelper = mock(EnvironmentActivationService);
                 processFactory = mock(ProcessServiceFactory);
                 configService = mock(ConfigurationService);
@@ -99,7 +110,7 @@ suite('Process - PythonExecutionFactory', () => {
                 when(interpreterPathExpHelper.get(anything())).thenReturn('selected interpreter path');
 
                 pyenvs = mock<IComponentAdapter>();
-                when(pyenvs.isWindowsStoreInterpreter(anyString())).thenResolve(true);
+                when(pyenvs.isMicrosoftStoreInterpreter(anyString())).thenResolve(true);
 
                 executionService = typemoq.Mock.ofType<IPythonExecutionService>();
                 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -126,16 +137,23 @@ suite('Process - PythonExecutionFactory', () => {
                 when(serviceContainer.get<IInterpreterService>(IInterpreterService)).thenReturn(
                     instance(interpreterService),
                 );
+                activatedEnvironmentLaunch = mock<IActivatedEnvironmentLaunch>();
+                when(activatedEnvironmentLaunch.selectIfLaunchedViaActivatedEnv()).thenResolve();
+                when(serviceContainer.get<IActivatedEnvironmentLaunch>(IActivatedEnvironmentLaunch)).thenReturn(
+                    instance(activatedEnvironmentLaunch),
+                );
                 when(serviceContainer.get<IComponentAdapter>(IComponentAdapter)).thenReturn(instance(pyenvs));
                 when(serviceContainer.tryGet<IInterpreterService>(IInterpreterService)).thenReturn(
                     instance(interpreterService),
+                );
+                when(serviceContainer.get<IConfigurationService>(IConfigurationService)).thenReturn(
+                    instance(configService),
                 );
                 factory = new PythonExecutionFactory(
                     instance(serviceContainer),
                     instance(activationHelper),
                     instance(processFactory),
                     instance(configService),
-                    instance(bufferDecoder),
                     instance(pyenvs),
                     instance(autoSelection),
                     instance(interpreterPathExpHelper),
@@ -158,7 +176,22 @@ suite('Process - PythonExecutionFactory', () => {
                 verify(pythonSettings.pythonPath).once();
             });
 
-            test('If interpreter is explicitly set, ensure we use it', async () => {
+            test('If interpreter is explicitly set to `python`, ensure we use it', async () => {
+                const pythonSettings = mock(PythonSettings);
+                when(processFactory.create(resource)).thenResolve(processService.object);
+                when(activationHelper.getActivatedEnvironmentVariables(resource)).thenResolve({ x: '1' });
+                reset(interpreterPathExpHelper);
+                when(interpreterPathExpHelper.get(anything())).thenReturn('python');
+                when(autoSelection.autoSelectInterpreter(anything())).thenResolve();
+                when(configService.getSettings(resource)).thenReturn(instance(pythonSettings));
+
+                const service = await factory.create({ resource, pythonPath: 'python' });
+
+                expect(service).to.not.equal(undefined);
+                verify(autoSelection.autoSelectInterpreter(anything())).once();
+            });
+
+            test('Otherwise if interpreter is explicitly set, ensure we use it', async () => {
                 const pythonSettings = mock(PythonSettings);
                 when(processFactory.create(resource)).thenResolve(processService.object);
                 when(activationHelper.getActivatedEnvironmentVariables(resource)).thenResolve({ x: '1' });
@@ -170,7 +203,7 @@ suite('Process - PythonExecutionFactory', () => {
                 const service = await factory.create({ resource, pythonPath: 'HELLO' });
 
                 expect(service).to.not.equal(undefined);
-                verify(pyenvs.isWindowsStoreInterpreter('HELLO')).once();
+                verify(pyenvs.isMicrosoftStoreInterpreter('HELLO')).once();
                 verify(pythonSettings.pythonPath).never();
             });
 
@@ -316,6 +349,7 @@ suite('Process - PythonExecutionFactory', () => {
                 } else {
                     verify(pyenvs.getCondaEnvironment(interpreter!.path)).once();
                 }
+                expect(getPixiEnvironmentFromInterpreterStub.notCalled).to.be.equal(true);
             });
 
             test('Ensure `createActivatedEnvironment` returns a PythonExecutionService instance if createCondaExecutionService() returns undefined', async () => {

@@ -7,9 +7,9 @@ import { IWorkspaceService } from '../../common/application/types';
 import { isTestExecution } from '../../common/constants';
 import { Resource } from '../../common/types';
 import { IServiceContainer } from '../../ioc/types';
-import { traceInfo, traceLog } from '../../logging';
+import { traceLog, traceVerbose } from '../../logging';
 import { IApplicationDiagnostics } from '../types';
-import { IDiagnostic, IDiagnosticsService, ISourceMapSupportService } from './types';
+import { IDiagnostic, IDiagnosticsService } from './types';
 
 function log(diagnostics: IDiagnostic[]): void {
     diagnostics.forEach((item) => {
@@ -21,7 +21,7 @@ function log(diagnostics: IDiagnostic[]): void {
                 break;
             }
             default: {
-                traceInfo(message);
+                traceVerbose(message);
             }
         }
     });
@@ -43,9 +43,7 @@ async function runDiagnostics(diagnosticServices: IDiagnosticsService[], resourc
 export class ApplicationDiagnostics implements IApplicationDiagnostics {
     constructor(@inject(IServiceContainer) private readonly serviceContainer: IServiceContainer) {}
 
-    public register() {
-        this.serviceContainer.get<ISourceMapSupportService>(ISourceMapSupportService).register();
-    }
+    public register() {}
 
     public async performPreStartupHealthCheck(resource: Resource): Promise<void> {
         // When testing, do not perform health checks, as modal dialogs can be displayed.

@@ -5,15 +5,16 @@
 // IMPORTANT: Do not import anything from the 'client' folder in this file as that folder is not available during smoke tests.
 
 import * as assert from 'assert';
-import * as fs from 'fs-extra';
+import * as fs from '../client/common/platform/fs-paths';
 import * as glob from 'glob';
 import * as path from 'path';
 import { coerce, SemVer } from 'semver';
 import { ConfigurationTarget, Event, TextDocument, Uri } from 'vscode';
-import type { IExtensionApi } from '../client/apiTypes';
+import type { PythonExtension } from '../client/api/types';
 import { IProcessService } from '../client/common/process/types';
 import { IDisposable } from '../client/common/types';
 import { IServiceContainer, IServiceManager } from '../client/ioc/types';
+import { ProposedExtensionAPI } from '../client/proposedApiTypes';
 import { EXTENSION_ROOT_DIR_FOR_TESTS, IS_MULTI_ROOT_TEST, IS_PERF_TEST, IS_SMOKE_TEST } from './constants';
 import { noop, sleep } from './core';
 
@@ -21,7 +22,7 @@ const StreamZip = require('node-stream-zip');
 
 export { sleep } from './core';
 
-const fileInNonRootWorkspace = path.join(EXTENSION_ROOT_DIR_FOR_TESTS, 'src', 'test', 'pythonFiles', 'dummy.py');
+const fileInNonRootWorkspace = path.join(EXTENSION_ROOT_DIR_FOR_TESTS, 'src', 'test', 'python_files', 'dummy.py');
 export const rootWorkspaceUri = getWorkspaceRoot();
 
 export const PYTHON_PATH = getPythonPath();
@@ -39,29 +40,17 @@ export enum OSType {
 export type PythonSettingKeys =
     | 'defaultInterpreterPath'
     | 'languageServer'
-    | 'linting.lintOnSave'
-    | 'linting.enabled'
-    | 'linting.pylintEnabled'
-    | 'linting.flake8Enabled'
-    | 'linting.pycodestyleEnabled'
-    | 'linting.pylamaEnabled'
-    | 'linting.prospectorEnabled'
-    | 'linting.pydocstyleEnabled'
-    | 'linting.mypyEnabled'
-    | 'linting.banditEnabled'
     | 'testing.pytestArgs'
     | 'testing.unittestArgs'
     | 'formatting.provider'
-    | 'sortImports.args'
     | 'testing.pytestEnabled'
     | 'testing.unittestEnabled'
     | 'envFile'
-    | 'linting.ignorePatterns'
     | 'terminal.activateEnvironment';
 
 async function disposePythonSettings() {
     if (!IS_SMOKE_TEST) {
-        const configSettings = await import('../client/common/configSettings');
+        const configSettings = await import('../client/common/configSettings.js');
         configSettings.PythonSettings.dispose();
     }
 }
@@ -235,7 +224,7 @@ export async function deleteFile(file: string) {
 
 export async function deleteFiles(globPattern: string) {
     const items = await new Promise<string[]>((resolve, reject) => {
-        glob(globPattern, (ex, files) => (ex ? reject(ex) : resolve(files)));
+        glob.default(globPattern, (ex, files) => (ex ? reject(ex) : resolve(files)));
     });
 
     return Promise.all(items.map((item) => fs.remove(item).catch(noop)));
@@ -303,10 +292,9 @@ export function correctPathForOsType(pathToCorrect: string, os?: OSType): string
  * @return `SemVer` version of the Python interpreter, or `undefined` if an error occurs.
  */
 export async function getPythonSemVer(procService?: IProcessService): Promise<SemVer | undefined> {
-    const decoder = await import('../client/common/process/decoder');
-    const proc = await import('../client/common/process/proc');
+    const proc = await import('../client/common/process/proc.js');
 
-    const pythonProcRunner = procService ? procService : new proc.ProcessService(new decoder.BufferDecoder());
+    const pythonProcRunner = procService ? procService : new proc.ProcessService();
     const pyVerArgs = ['-c', 'import sys;print("{0}.{1}.{2}".format(*sys.version_info[:3]))'];
 
     return pythonProcRunner
@@ -438,7 +426,7 @@ export async function isPythonVersion(...versions: string[]): Promise<boolean> {
     }
 }
 
-export interface IExtensionTestApi extends IExtensionApi {
+export interface IExtensionTestApi extends PythonExtension, ProposedExtensionAPI {
     serviceContainer: IServiceContainer;
     serviceManager: IServiceManager;
 }
@@ -464,12 +452,6 @@ export async function unzip(zipFile: string, targetFolder: string): Promise<void
 }
 /**
  * Wait for a condition to be fulfilled within a timeout.
- *
- * @export
- * @param {() => Promise<boolean>} condition
- * @param {number} timeoutMs
- * @param {string} errorMessage
- * @returns {Promise<void>}
  */
 export async function waitForCondition(
     condition: () => Promise<boolean>,
@@ -520,7 +502,7 @@ export async function openFile(file: string): Promise<TextDocument> {
     const vscode = require('vscode') as typeof import('vscode');
     const textDocument = await vscode.workspace.openTextDocument(file);
     await vscode.window.showTextDocument(textDocument);
-    assert(vscode.window.activeTextEditor, 'No active editor');
+    assert.ok(vscode.window.activeTextEditor, 'No active editor');
     return textDocument;
 }
 

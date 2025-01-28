@@ -9,6 +9,7 @@ import * as platformUtils from '../../../../../client/common/utils/platform';
 import { PythonEnvKind } from '../../../../../client/pythonEnvironments/base/info';
 import { getEnvs } from '../../../../../client/pythonEnvironments/base/locatorUtils';
 import { PythonEnvsChangedEvent } from '../../../../../client/pythonEnvironments/base/watcher';
+import * as helpers from '../../../../../client/common/helpers';
 import * as externalDependencies from '../../../../../client/pythonEnvironments/common/externalDependencies';
 import {
     CustomVirtualEnvironmentLocator,
@@ -32,7 +33,7 @@ suite('CustomVirtualEnvironment Locator', () => {
     let untildify: sinon.SinonStub;
 
     setup(async () => {
-        untildify = sinon.stub(externalDependencies, 'untildify');
+        untildify = sinon.stub(helpers, 'untildify');
         untildify.callsFake((value: string) => value.replace('~', testVirtualHomeDir));
         getUserHomeDirStub = sinon.stub(platformUtils, 'getUserHomeDir');
         getUserHomeDirStub.returns(testVirtualHomeDir);
@@ -213,7 +214,7 @@ suite('CustomVirtualEnvironment Locator', () => {
 
     test('onChanged fires if venvPath setting changes', async () => {
         const events: PythonEnvsChangedEvent[] = [];
-        const expected: PythonEnvsChangedEvent[] = [{}];
+        const expected: PythonEnvsChangedEvent[] = [{ providerId: locator.providerId }];
         locator.onChanged((e) => events.push(e));
 
         await getEnvs(locator.iterEnvs());
@@ -228,7 +229,7 @@ suite('CustomVirtualEnvironment Locator', () => {
 
     test('onChanged fires if venvFolders setting changes', async () => {
         const events: PythonEnvsChangedEvent[] = [];
-        const expected: PythonEnvsChangedEvent[] = [{}];
+        const expected: PythonEnvsChangedEvent[] = [{ providerId: locator.providerId }];
         locator.onChanged((e) => events.push(e));
 
         await getEnvs(locator.iterEnvs());

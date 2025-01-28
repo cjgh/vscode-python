@@ -3,14 +3,14 @@
 
 import { cloneDeep } from 'lodash';
 import { Event, EventEmitter } from 'vscode';
-import { identifyEnvironment } from '../../../common/environmentIdentifier';
+import { isIdentifierRegistered, identifyEnvironment } from '../../../common/environmentIdentifier';
 import { IEnvironmentInfoService } from '../../info/environmentInfoService';
-import { PythonEnvInfo } from '../../info';
+import { PythonEnvInfo, PythonEnvKind } from '../../info';
 import { getEnvPath, setEnvDisplayString } from '../../info/env';
 import { InterpreterInformation } from '../../info/interpreter';
 import {
     BasicEnvInfo,
-    ILocator,
+    ICompositeLocator,
     IPythonEnvsIterator,
     IResolvingLocator,
     isProgressEvent,
@@ -35,9 +35,16 @@ export class PythonEnvsResolver implements IResolvingLocator {
     }
 
     constructor(
-        private readonly parentLocator: ILocator<BasicEnvInfo>,
+        private readonly parentLocator: ICompositeLocator<BasicEnvInfo>,
         private readonly environmentInfoService: IEnvironmentInfoService,
-    ) {}
+    ) {
+        this.parentLocator.onChanged((event) => {
+            if (event.type && event.searchLocation !== undefined) {
+                // We detect an environment changed, reset any stored info for it so it can be re-run.
+                this.environmentInfoService.resetInfo(event.searchLocation);
+            }
+        });
+    }
 
     public async resolveEnv(path: string): Promise<PythonEnvInfo | undefined> {
         const [executablePath, envPath] = await getExecutablePathAndEnvPath(path);
@@ -45,6 +52,9 @@ export class PythonEnvsResolver implements IResolvingLocator {
         const kind = await identifyEnvironment(path);
         const environment = await resolveBasicEnv({ kind, executablePath, envPath });
         const info = await this.environmentInfoService.getEnvironmentInfo(environment);
+        traceVerbose(
+            `Environment resolver resolved ${path} for ${JSON.stringify(environment)} to ${JSON.stringify(info)}`,
+        );
         if (!info) {
             return undefined;
         }
@@ -63,6 +73,7 @@ export class PythonEnvsResolver implements IResolvingLocator {
         iterator: IPythonEnvsIterator<BasicEnvInfo>,
         didUpdate: EventEmitter<PythonEnvUpdatedEvent | ProgressNotificationEvent>,
     ): IPythonEnvsIterator {
+        const environmentKinds = new Map<string, PythonEnvKind>();
         const state = {
             done: false,
             pending: 0,
@@ -84,9 +95,10 @@ export class PythonEnvsResolver implements IResolvingLocator {
                     throw new Error(
                         'Unsupported behavior: `undefined` environment updates are not supported from downstream locators in resolver',
                     );
-                } else if (seen[event.index] !== undefined) {
+                } else if (event.index !== undefined && seen[event.index] !== undefined) {
                     const old = seen[event.index];
-                    seen[event.index] = await resolveBasicEnv(event.update, true);
+                    await setKind(event.update, environmentKinds);
+                    seen[event.index] = await resolveBasicEnv(event.update);
                     didUpdate.fire({ old, index: event.index, update: seen[event.index] });
                     this.resolveInBackground(event.index, state, didUpdate, seen).ignoreErrors();
                 } else {
@@ -103,7 +115,8 @@ export class PythonEnvsResolver implements IResolvingLocator {
         let result = await iterator.next();
         while (!result.done) {
             // Use cache from the current refresh where possible.
-            const currEnv = await resolveBasicEnv(result.value, true);
+            await setKind(result.value, environmentKinds);
+            const currEnv = await resolveBasicEnv(result.value);
             seen.push(currEnv);
             yield currEnv;
             this.resolveInBackground(seen.indexOf(currEnv), state, didUpdate, seen).ignoreErrors();
@@ -127,7 +140,7 @@ export class PythonEnvsResolver implements IResolvingLocator {
         const info = await this.environmentInfoService.getEnvironmentInfo(seen[envIndex]);
         const old = seen[envIndex];
         if (info) {
-            const resolvedEnv = getResolvedEnv(info, seen[envIndex]);
+            const resolvedEnv = getResolvedEnv(info, seen[envIndex], old.identifiedUsingNativeLocator);
             seen[envIndex] = resolvedEnv;
             didUpdate.fire({ old, index: envIndex, update: resolvedEnv });
         } else {
@@ -137,6 +150,26 @@ export class PythonEnvsResolver implements IResolvingLocator {
         state.pending -= 1;
         checkIfFinishedAndNotify(state, didUpdate);
     }
+}
+
+async function setKind(env: BasicEnvInfo, environmentKinds: Map<string, PythonEnvKind>) {
+    const { path } = getEnvPath(env.executablePath, env.envPath);
+    // For native locators, do not try to identify the environment kind.
+    // its already set by the native locator & thats accurate.
+    if (env.identifiedUsingNativeLocator) {
+        environmentKinds.set(path, env.kind);
+        return;
+    }
+    let kind = environmentKinds.get(path);
+    if (!kind) {
+        if (!isIdentifierRegistered(env.kind)) {
+            // If identifier is not registered, skip setting env kind.
+            return;
+        }
+        kind = await identifyEnvironment(path);
+        environmentKinds.set(path, kind);
+    }
+    env.kind = kind;
 }
 
 /**
@@ -151,17 +184,26 @@ function checkIfFinishedAndNotify(
     if (state.done && state.pending === 0) {
         didUpdate.fire({ stage: ProgressReportStage.discoveryFinished });
         didUpdate.dispose();
+        traceVerbose(`Finished with environment resolver`);
     }
 }
 
-function getResolvedEnv(interpreterInfo: InterpreterInformation, environment: PythonEnvInfo) {
+function getResolvedEnv(
+    interpreterInfo: InterpreterInformation,
+    environment: PythonEnvInfo,
+    identifiedUsingNativeLocator = false,
+) {
     // Deep copy into a new object
     const resolvedEnv = cloneDeep(environment);
-    resolvedEnv.executable.filename = interpreterInfo.executable.filename;
     resolvedEnv.executable.sysPrefix = interpreterInfo.executable.sysPrefix;
     const isEnvLackingPython =
         getEnvPath(resolvedEnv.executable.filename, resolvedEnv.location).pathType === 'envFolderPath';
-    if (isEnvLackingPython) {
+    // TODO: Shouldn't this only apply to conda, how else can we have an environment and not have Python in it?
+    // If thats the case, then this should be gated on environment.kind === PythonEnvKind.Conda
+    // For non-native do not blow away the versions returned by native locator.
+    // Windows Store and Home brew have exe and sysprefix in different locations,
+    // Thus above check is not valid for these envs.
+    if (isEnvLackingPython && environment.kind !== PythonEnvKind.MicrosoftStore && !identifiedUsingNativeLocator) {
         // Install python later into these envs might change the version, which can be confusing for users.
         // So avoid displaying any version until it is installed.
         resolvedEnv.version = getEmptyVersion();

@@ -9,13 +9,11 @@ import { swallowExceptions } from '../../../common/utils/decorators';
 import { AttachRequestArguments } from '../../types';
 import { DebuggerEvents } from './constants';
 import { IChildProcessAttachService, IDebugSessionEventHandlers } from './types';
+import { DebuggerTypeName } from '../../constants';
 
 /**
  * This class is responsible for automatically attaching the debugger to any
  * child processes launched. I.e. this is the class responsible for multi-proc debugging.
- * @export
- * @class ChildProcessAttachEventHandler
- * @implements {IDebugSessionEventHandlers}
  */
 @injectable()
 export class ChildProcessAttachEventHandler implements IDebugSessionEventHandlers {
@@ -25,7 +23,7 @@ export class ChildProcessAttachEventHandler implements IDebugSessionEventHandler
 
     @swallowExceptions('Handle child process launch')
     public async handleCustomEvent(event: DebugSessionCustomEvent): Promise<void> {
-        if (!event) {
+        if (!event || event.session.configuration.type !== DebuggerTypeName) {
             return;
         }
 

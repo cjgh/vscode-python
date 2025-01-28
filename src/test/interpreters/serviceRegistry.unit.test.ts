@@ -14,33 +14,36 @@ import {
     IInterpreterAutoSelectionProxyService,
 } from '../../client/interpreter/autoSelection/types';
 import { EnvironmentTypeComparer } from '../../client/interpreter/configuration/environmentTypeComparer';
+import { InstallPythonCommand } from '../../client/interpreter/configuration/interpreterSelector/commands/installPython';
+import { InstallPythonViaTerminal } from '../../client/interpreter/configuration/interpreterSelector/commands/installPython/installPythonViaTerminal';
 import { ResetInterpreterCommand } from '../../client/interpreter/configuration/interpreterSelector/commands/resetInterpreter';
 import { SetInterpreterCommand } from '../../client/interpreter/configuration/interpreterSelector/commands/setInterpreter';
-import { SetShebangInterpreterCommand } from '../../client/interpreter/configuration/interpreterSelector/commands/setShebangInterpreter';
 import { InterpreterSelector } from '../../client/interpreter/configuration/interpreterSelector/interpreterSelector';
 import { PythonPathUpdaterService } from '../../client/interpreter/configuration/pythonPathUpdaterService';
 import { PythonPathUpdaterServiceFactory } from '../../client/interpreter/configuration/pythonPathUpdaterServiceFactory';
 import {
     IInterpreterComparer,
+    IInterpreterQuickPick,
     IInterpreterSelector,
     IPythonPathUpdaterServiceFactory,
     IPythonPathUpdaterServiceManager,
 } from '../../client/interpreter/configuration/types';
 import {
+    IActivatedEnvironmentLaunch,
     IInterpreterDisplay,
     IInterpreterHelper,
     IInterpreterService,
-    IShebangCodeLensProvider,
 } from '../../client/interpreter/contracts';
 import { InterpreterDisplay } from '../../client/interpreter/display';
-import { InterpreterLocatorProgressStatubarHandler } from '../../client/interpreter/display/progressDisplay';
-import { ShebangCodeLensProvider } from '../../client/interpreter/display/shebangCodeLensProvider';
+import { InterpreterLocatorProgressStatusBarHandler } from '../../client/interpreter/display/progressDisplay';
 import { InterpreterHelper } from '../../client/interpreter/helpers';
 import { InterpreterService } from '../../client/interpreter/interpreterService';
 import { registerTypes } from '../../client/interpreter/serviceRegistry';
+import { ActivatedEnvironmentLaunch } from '../../client/interpreter/virtualEnvs/activatedEnvLaunch';
 import { CondaInheritEnvPrompt } from '../../client/interpreter/virtualEnvs/condaInheritEnvPrompt';
 import { VirtualEnvironmentPrompt } from '../../client/interpreter/virtualEnvs/virtualEnvPrompt';
 import { ServiceManager } from '../../client/ioc/serviceManager';
+import { InterpreterPathCommand } from '../../client/interpreter/interpreterPathCommand';
 
 suite('Interpreters - Service Registry', () => {
     test('Registrations', () => {
@@ -48,9 +51,11 @@ suite('Interpreters - Service Registry', () => {
         registerTypes(instance(serviceManager));
 
         [
+            [IExtensionSingleActivationService, InstallPythonCommand],
+            [IExtensionSingleActivationService, InstallPythonViaTerminal],
             [IExtensionSingleActivationService, SetInterpreterCommand],
+            [IInterpreterQuickPick, SetInterpreterCommand],
             [IExtensionSingleActivationService, ResetInterpreterCommand],
-            [IExtensionSingleActivationService, SetShebangInterpreterCommand],
 
             [IExtensionActivationService, VirtualEnvironmentPrompt],
 
@@ -59,20 +64,20 @@ suite('Interpreters - Service Registry', () => {
 
             [IPythonPathUpdaterServiceFactory, PythonPathUpdaterServiceFactory],
             [IPythonPathUpdaterServiceManager, PythonPathUpdaterService],
-
             [IInterpreterSelector, InterpreterSelector],
-            [IShebangCodeLensProvider, ShebangCodeLensProvider],
             [IInterpreterHelper, InterpreterHelper],
             [IInterpreterComparer, EnvironmentTypeComparer],
 
-            [IExtensionSingleActivationService, InterpreterLocatorProgressStatubarHandler],
+            [IExtensionSingleActivationService, InterpreterLocatorProgressStatusBarHandler],
 
             [IInterpreterAutoSelectionProxyService, InterpreterAutoSelectionProxyService],
             [IInterpreterAutoSelectionService, InterpreterAutoSelectionService],
 
             [EnvironmentActivationService, EnvironmentActivationService],
             [IEnvironmentActivationService, EnvironmentActivationService],
+            [IExtensionSingleActivationService, InterpreterPathCommand],
             [IExtensionActivationService, CondaInheritEnvPrompt],
+            [IActivatedEnvironmentLaunch, ActivatedEnvironmentLaunch],
         ].forEach((mapping) => {
             // eslint-disable-next-line prefer-spread
             verify(serviceManager.addSingleton.apply(serviceManager, mapping as never)).once();

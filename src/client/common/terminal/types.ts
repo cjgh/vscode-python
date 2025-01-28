@@ -3,7 +3,7 @@
 
 'use strict';
 
-import { CancellationToken, Event, Terminal, Uri } from 'vscode';
+import { CancellationToken, Event, Terminal, Uri, TerminalShellExecution } from 'vscode';
 import { PythonEnvironment } from '../../pythonEnvironments/info';
 import { IEventNamePropertyMapping } from '../../telemetry/index';
 import { IDisposable, Resource } from '../types';
@@ -11,9 +11,11 @@ import { IDisposable, Resource } from '../types';
 export enum TerminalActivationProviders {
     bashCShellFish = 'bashCShellFish',
     commandPromptAndPowerShell = 'commandPromptAndPowerShell',
+    nushell = 'nushell',
     pyenv = 'pyenv',
     conda = 'conda',
     pipenv = 'pipenv',
+    pixi = 'pixi',
 }
 export enum TerminalShellType {
     powershell = 'powershell',
@@ -26,6 +28,7 @@ export enum TerminalShellType {
     fish = 'fish',
     cshell = 'cshell',
     tcshell = 'tshell',
+    nushell = 'nushell',
     wsl = 'wsl',
     xonsh = 'xonsh',
     other = 'other',
@@ -49,7 +52,9 @@ export interface ITerminalService extends IDisposable {
         cancel?: CancellationToken,
         swallowExceptions?: boolean,
     ): Promise<void>;
+    /** @deprecated */
     sendText(text: string): Promise<void>;
+    executeCommand(commandLine: string, isPythonShell: boolean): Promise<TerminalShellExecution | undefined>;
     show(preserveFocus?: boolean): Promise<void>;
 }
 
@@ -90,12 +95,8 @@ export interface ITerminalServiceFactory {
     /**
      * Gets a terminal service.
      * If one exists with the same information, that is returned else a new one is created.
-     *
-     * @param {TerminalCreationOptions}
-     * @returns {ITerminalService}
-     * @memberof ITerminalServiceFactory
      */
-    getTerminalService(options: TerminalCreationOptions): ITerminalService;
+    getTerminalService(options: TerminalCreationOptions & { newTerminalPerFile?: boolean }): ITerminalService;
     createTerminalService(resource?: Uri, title?: string): ITerminalService;
 }
 
@@ -122,11 +123,7 @@ export type TerminalActivationOptions = {
     resource?: Resource;
     preserveFocus?: boolean;
     interpreter?: PythonEnvironment;
-    /**
-     * When sending commands to the terminal, do not display the terminal.
-     *
-     * @type {boolean}
-     */
+    // When sending commands to the terminal, do not display the terminal.
     hideFromUser?: boolean;
 };
 export interface ITerminalActivator {
@@ -160,16 +157,10 @@ export const IShellDetector = Symbol('IShellDetector');
 /**
  * Used to identify a shell.
  * Each implemenetion will provide a unique way of identifying the shell.
- *
- * @export
- * @interface IShellDetector
  */
 export interface IShellDetector {
     /**
      * Classes with higher priorities will be used first when identifying the shell.
-     *
-     * @type {number}
-     * @memberof IShellDetector
      */
     readonly priority: number;
     identify(telemetryProperties: ShellIdentificationTelemetry, terminal?: Terminal): TerminalShellType | undefined;

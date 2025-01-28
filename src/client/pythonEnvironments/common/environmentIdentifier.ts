@@ -14,10 +14,13 @@ import {
     isVirtualenvEnvironment as isVirtualEnvEnvironment,
     isVirtualenvwrapperEnvironment as isVirtualEnvWrapperEnvironment,
 } from './environmentManagers/simplevirtualenvs';
-import { isWindowsStoreEnvironment } from './environmentManagers/windowsStoreEnv';
+import { isMicrosoftStoreEnvironment } from './environmentManagers/microsoftStoreEnv';
+import { isActiveStateEnvironment } from './environmentManagers/activestate';
+import { isPixiEnvironment } from './environmentManagers/pixi';
+
+const notImplemented = () => Promise.resolve(false);
 
 function getIdentifiers(): Map<PythonEnvKind, (path: string) => Promise<boolean>> {
-    const notImplemented = () => Promise.resolve(false);
     const defaultTrue = () => Promise.resolve(true);
     const identifier: Map<PythonEnvKind, (path: string) => Promise<boolean>> = new Map();
     Object.values(PythonEnvKind).forEach((k) => {
@@ -25,16 +28,27 @@ function getIdentifiers(): Map<PythonEnvKind, (path: string) => Promise<boolean>
     });
 
     identifier.set(PythonEnvKind.Conda, isCondaEnvironment);
-    identifier.set(PythonEnvKind.WindowsStore, isWindowsStoreEnvironment);
+    identifier.set(PythonEnvKind.MicrosoftStore, isMicrosoftStoreEnvironment);
     identifier.set(PythonEnvKind.Pipenv, isPipenvEnvironment);
     identifier.set(PythonEnvKind.Pyenv, isPyenvEnvironment);
     identifier.set(PythonEnvKind.Poetry, isPoetryEnvironment);
+    identifier.set(PythonEnvKind.Pixi, isPixiEnvironment);
     identifier.set(PythonEnvKind.Venv, isVenvEnvironment);
     identifier.set(PythonEnvKind.VirtualEnvWrapper, isVirtualEnvWrapperEnvironment);
     identifier.set(PythonEnvKind.VirtualEnv, isVirtualEnvEnvironment);
+    identifier.set(PythonEnvKind.ActiveState, isActiveStateEnvironment);
     identifier.set(PythonEnvKind.Unknown, defaultTrue);
     identifier.set(PythonEnvKind.OtherGlobal, isGloballyInstalledEnv);
     return identifier;
+}
+
+export function isIdentifierRegistered(kind: PythonEnvKind): boolean {
+    const identifiers = getIdentifiers();
+    const identifier = identifiers.get(kind);
+    if (identifier === notImplemented) {
+        return false;
+    }
+    return true;
 }
 
 /**

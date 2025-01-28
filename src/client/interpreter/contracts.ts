@@ -1,9 +1,10 @@
 import { SemVer } from 'semver';
-import { CodeLensProvider, ConfigurationTarget, Disposable, Event, TextDocument, Uri } from 'vscode';
+import { ConfigurationTarget, Disposable, Event, Uri } from 'vscode';
 import { FileChangeType } from '../common/platform/fileSystemWatcher';
 import { Resource } from '../common/types';
 import { PythonEnvSource } from '../pythonEnvironments/base/info';
 import {
+    GetRefreshEnvironmentsOptions,
     ProgressNotificationEvent,
     PythonLocatorQuery,
     TriggerRefreshOptions,
@@ -22,7 +23,7 @@ export const IComponentAdapter = Symbol('IComponentAdapter');
 export interface IComponentAdapter {
     readonly onProgress: Event<ProgressNotificationEvent>;
     triggerRefresh(query?: PythonLocatorQuery, options?: TriggerRefreshOptions): Promise<void>;
-    getRefreshPromise(): Promise<void> | undefined;
+    getRefreshPromise(options?: GetRefreshEnvironmentsOptions): Promise<void> | undefined;
     readonly onChanged: Event<PythonEnvironmentsChangedEvent>;
     // VirtualEnvPrompt
     onDidCreate(resource: Resource, callback: () => void): Disposable;
@@ -50,7 +51,7 @@ export interface IComponentAdapter {
     // Undefined is expected on this API, if the environment is not conda env.
     getCondaEnvironment(interpreterPath: string): Promise<CondaEnvironmentInfo | undefined>;
 
-    isWindowsStoreInterpreter(pythonPath: string): Promise<boolean>;
+    isMicrosoftStoreInterpreter(pythonPath: string): Promise<boolean>;
 }
 
 export const ICondaService = Symbol('ICondaService');
@@ -74,9 +75,10 @@ export const IInterpreterService = Symbol('IInterpreterService');
 export interface IInterpreterService {
     triggerRefresh(query?: PythonLocatorQuery, options?: TriggerRefreshOptions): Promise<void>;
     readonly refreshPromise: Promise<void> | undefined;
+    getRefreshPromise(options?: GetRefreshEnvironmentsOptions): Promise<void> | undefined;
     readonly onDidChangeInterpreters: Event<PythonEnvironmentsChangedEvent>;
     onDidChangeInterpreterConfiguration: Event<Uri | undefined>;
-    onDidChangeInterpreter: Event<void>;
+    onDidChangeInterpreter: Event<Uri | undefined>;
     onDidChangeInterpreterInformation: Event<PythonEnvironment>;
     /**
      * Note this API does not trigger the refresh but only works with the current refresh if any. Information
@@ -98,11 +100,6 @@ export const IInterpreterDisplay = Symbol('IInterpreterDisplay');
 export interface IInterpreterDisplay {
     refresh(resource?: Uri): Promise<void>;
     registerVisibilityFilter(filter: IInterpreterStatusbarVisibilityFilter): void;
-}
-
-export const IShebangCodeLensProvider = Symbol('IShebangCodeLensProvider');
-export interface IShebangCodeLensProvider extends CodeLensProvider {
-    detectShebang(document: TextDocument, resolveShebangAsInterpreter?: boolean): Promise<string | undefined>;
 }
 
 export const IInterpreterHelper = Symbol('IInterpreterHelper');
@@ -127,3 +124,8 @@ export type WorkspacePythonPath = {
     folderUri: Uri;
     configTarget: ConfigurationTarget.Workspace | ConfigurationTarget.WorkspaceFolder;
 };
+
+export const IActivatedEnvironmentLaunch = Symbol('IActivatedEnvironmentLaunch');
+export interface IActivatedEnvironmentLaunch {
+    selectIfLaunchedViaActivatedEnv(doNotBlockOnSelection?: boolean): Promise<string | undefined>;
+}

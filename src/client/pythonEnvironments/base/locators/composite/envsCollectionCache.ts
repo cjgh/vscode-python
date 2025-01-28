@@ -2,16 +2,17 @@
 // Licensed under the MIT License.
 
 import { Event } from 'vscode';
-import { traceInfo } from '../../../../logging';
-import { reportInterpretersChanged } from '../../../../proposedApi';
+import { isTestExecution } from '../../../../common/constants';
+import { traceVerbose } from '../../../../logging';
 import { arePathsSame, getFileInfo, pathExists } from '../../../common/externalDependencies';
-import { PythonEnvInfo } from '../../info';
-import { areSameEnv, getEnvPath } from '../../info/env';
+import { PythonEnvInfo, PythonEnvKind } from '../../info';
+import { areEnvsDeepEqual, areSameEnv, getEnvPath } from '../../info/env';
 import {
     BasicPythonEnvCollectionChangedEvent,
     PythonEnvCollectionChangedEvent,
     PythonEnvsWatcher,
 } from '../../watcher';
+import { getCondaInterpreterPath } from '../../../common/environmentManagers/conda';
 
 export interface IEnvsCollectionCache {
     /**
@@ -52,19 +53,14 @@ export interface IEnvsCollectionCache {
     /**
      * Removes invalid envs from cache. Note this does not check for outdated info when
      * validating cache.
+     * @param envs Carries list of envs for the latest refresh.
+     * @param isCompleteList Carries whether the list of envs is complete or not.
      */
-    validateCache(): Promise<void>;
-
-    /**
-     * Clears the in-memory cache. This can be used for hard refresh.
-     */
-    clearCache(): Promise<void>;
+    validateCache(envs?: PythonEnvInfo[], isCompleteList?: boolean): Promise<void>;
 }
 
-export type PythonEnvLatestInfo = { hasLatestInfo?: boolean } & PythonEnvInfo;
-
 interface IPersistentStorage {
-    load(): Promise<PythonEnvInfo[]>;
+    get(): PythonEnvInfo[];
     store(envs: PythonEnvInfo[]): Promise<void>;
 }
 
@@ -73,21 +69,57 @@ interface IPersistentStorage {
  */
 export class PythonEnvInfoCache extends PythonEnvsWatcher<PythonEnvCollectionChangedEvent>
     implements IEnvsCollectionCache {
-    private envs: PythonEnvLatestInfo[] = [];
+    private envs: PythonEnvInfo[] = [];
+
+    /**
+     * Carries the list of envs which have been validated to have latest info.
+     */
+    private validatedEnvs = new Set<string>();
+
+    /**
+     * Carries the list of envs which have been flushed to persistent storage.
+     * It signifies that the env info is likely up-to-date.
+     */
+    private flushedEnvs = new Set<string>();
 
     constructor(private readonly persistentStorage: IPersistentStorage) {
         super();
     }
 
-    public async validateCache(): Promise<void> {
+    public async validateCache(envs?: PythonEnvInfo[], isCompleteList?: boolean): Promise<void> {
         /**
          * We do check if an env has updated as we already run discovery in background
          * which means env cache will have up-to-date envs eventually. This also means
-         * we avoid the cost of running lstat. So simply remove envs which no longer
-         * exist.
+         * we avoid the cost of running lstat. So simply remove envs which are no longer
+         * valid.
          */
         const areEnvsValid = await Promise.all(
-            this.envs.map((e) => (e.executable.filename === 'python' ? true : pathExists(e.executable.filename))),
+            this.envs.map(async (cachedEnv) => {
+                const { path } = getEnvPath(cachedEnv.executable.filename, cachedEnv.location);
+                if (await pathExists(path)) {
+                    if (envs && isCompleteList) {
+                        /**
+                         * Only consider a cached env to be valid if it's relevant. That means:
+                         * * It is relevant for some other workspace folder which is not opened currently.
+                         * * It is either reported in the latest complete discovery for this session.
+                         * * It is provided by the consumer themselves.
+                         */
+                        if (cachedEnv.searchLocation) {
+                            return true;
+                        }
+                        if (envs.some((env) => cachedEnv.id === env.id)) {
+                            return true;
+                        }
+                        if (Array.from(this.validatedEnvs.keys()).some((envId) => cachedEnv.id === envId)) {
+                            // These envs are provided by the consumer themselves, consider them valid.
+                            return true;
+                        }
+                    } else {
+                        return true;
+                    }
+                }
+                return false;
+            }),
         );
         const invalidIndexes = areEnvsValid
             .map((isValid, index) => (isValid ? -1 : index))
@@ -95,31 +127,46 @@ export class PythonEnvInfoCache extends PythonEnvsWatcher<PythonEnvCollectionCha
             .reverse(); // Reversed so indexes do not change when deleting
         invalidIndexes.forEach((index) => {
             const env = this.envs.splice(index, 1)[0];
+            traceVerbose(`Removing invalid env from cache ${env.id}`);
             this.fire({ old: env, new: undefined });
-            reportInterpretersChanged([
-                { path: getEnvPath(env.executable.filename, env.location).path, type: 'remove' },
-            ]);
         });
+        if (envs) {
+            // See if any env has updated after the last refresh and fire events.
+            envs.forEach((env) => {
+                const cachedEnv = this.envs.find((e) => e.id === env.id);
+                if (cachedEnv && !areEnvsDeepEqual(cachedEnv, env)) {
+                    this.updateEnv(cachedEnv, env, true);
+                }
+            });
+        }
     }
 
     public getAllEnvs(): PythonEnvInfo[] {
         return this.envs;
     }
 
-    public addEnv(env: PythonEnvLatestInfo, hasLatestInfo?: boolean): void {
+    public addEnv(env: PythonEnvInfo, hasLatestInfo?: boolean): void {
         const found = this.envs.find((e) => areSameEnv(e, env));
-        if (hasLatestInfo) {
-            env.hasLatestInfo = true;
-            this.flush(false).ignoreErrors();
-        }
         if (!found) {
             this.envs.push(env);
             this.fire({ new: env });
-            reportInterpretersChanged([{ path: getEnvPath(env.executable.filename, env.location).path, type: 'add' }]);
+        } else if (hasLatestInfo && !this.validatedEnvs.has(env.id!)) {
+            // Update cache if we have latest info and the env is not already validated.
+            this.updateEnv(found, env, true);
+        }
+        if (hasLatestInfo) {
+            traceVerbose(`Flushing env to cache ${env.id}`);
+            this.validatedEnvs.add(env.id!);
+            this.flush(env).ignoreErrors(); // If we have latest info, flush it so it can be saved.
         }
     }
 
-    public updateEnv(oldValue: PythonEnvInfo, newValue: PythonEnvInfo | undefined): void {
+    public updateEnv(oldValue: PythonEnvInfo, newValue: PythonEnvInfo | undefined, forceUpdate = false): void {
+        if (this.flushedEnvs.has(oldValue.id!) && !forceUpdate) {
+            // We have already flushed this env to persistent storage, so it likely has upto date info.
+            // If we have latest info, then we do not need to update the cache.
+            return;
+        }
         const index = this.envs.findIndex((e) => areSameEnv(e, oldValue));
         if (index !== -1) {
             if (newValue === undefined) {
@@ -128,64 +175,88 @@ export class PythonEnvInfoCache extends PythonEnvsWatcher<PythonEnvCollectionCha
                 this.envs[index] = newValue;
             }
             this.fire({ old: oldValue, new: newValue });
-            reportInterpretersChanged([
-                {
-                    path: getEnvPath(oldValue.executable.filename, oldValue.location).path,
-                    type: newValue ? 'update' : 'remove',
-                },
-            ]);
         }
     }
 
     public async getLatestInfo(path: string): Promise<PythonEnvInfo | undefined> {
         // `path` can either be path to environment or executable path
         const env = this.envs.find((e) => arePathsSame(e.location, path)) ?? this.envs.find((e) => areSameEnv(e, path));
-        if (env?.hasLatestInfo) {
+        if (
+            env?.kind === PythonEnvKind.Conda &&
+            getEnvPath(env.executable.filename, env.location).pathType === 'envFolderPath'
+        ) {
+            if (await pathExists(getCondaInterpreterPath(env.location))) {
+                // This is a conda env without python in cache which actually now has a valid python, so return
+                // `undefined` and delete value from cache as cached value is not the latest anymore.
+                this.validatedEnvs.delete(env.id!);
+                return undefined;
+            }
+            // Do not attempt to validate these envs as they lack an executable, and consider them as validated by default.
+            this.validatedEnvs.add(env.id!);
             return env;
         }
-        if (env && (env?.hasLatestInfo || (await validateInfo(env)))) {
-            return env;
+        if (env) {
+            if (this.validatedEnvs.has(env.id!)) {
+                traceVerbose(`Found cached env for ${path}`);
+                return env;
+            }
+            if (await this.validateInfo(env)) {
+                traceVerbose(`Needed to validate ${path} with latest info`);
+                this.validatedEnvs.add(env.id!);
+                return env;
+            }
         }
+        traceVerbose(`No cached env found for ${path}`);
         return undefined;
     }
 
-    public async clearAndReloadFromStorage(): Promise<void> {
-        this.envs = await this.persistentStorage.load();
-        this.envs.forEach((e) => {
-            delete e.hasLatestInfo;
-        });
+    public clearAndReloadFromStorage(): void {
+        this.envs = this.persistentStorage.get();
+        this.markAllEnvsAsFlushed();
     }
 
-    public async flush(allEnvsHaveLatestInfo = true): Promise<void> {
-        if (this.envs.length) {
-            traceInfo('Environments added to cache', JSON.stringify(this.envs));
-            if (allEnvsHaveLatestInfo) {
-                this.envs.forEach((e) => {
-                    e.hasLatestInfo = true;
-                });
-            }
-            await this.persistentStorage.store(this.envs);
+    public async flush(env?: PythonEnvInfo): Promise<void> {
+        if (env) {
+            // Flush only the given env.
+            const envs = this.persistentStorage.get();
+            const index = envs.findIndex((e) => e.id === env.id);
+            envs[index] = env;
+            this.flushedEnvs.add(env.id!);
+            await this.persistentStorage.store(envs);
+            return;
         }
+        traceVerbose('Environments added to cache', JSON.stringify(this.envs));
+        this.markAllEnvsAsFlushed();
+        await this.persistentStorage.store(this.envs);
     }
 
-    public clearCache(): Promise<void> {
+    private markAllEnvsAsFlushed(): void {
         this.envs.forEach((e) => {
-            this.fire({ old: e, new: undefined });
+            this.flushedEnvs.add(e.id!);
         });
-        reportInterpretersChanged([{ path: undefined, type: 'clear-all' }]);
-        this.envs = [];
-        return Promise.resolve();
     }
-}
 
-async function validateInfo(env: PythonEnvInfo) {
-    const { ctime, mtime } = await getFileInfo(env.executable.filename);
-    if (ctime === env.executable.ctime && mtime === env.executable.mtime) {
-        return true;
+    /**
+     * Ensure environment has complete and latest information.
+     */
+    private async validateInfo(env: PythonEnvInfo) {
+        // Make sure any previously flushed information is upto date by ensuring environment did not change.
+        if (!this.flushedEnvs.has(env.id!)) {
+            // Any environment with complete information is flushed, so this env does not contain complete info.
+            return false;
+        }
+        if (env.version.micro === -1 || env.version.major === -1 || env.version.minor === -1) {
+            // Env should not contain incomplete versions.
+            return false;
+        }
+        const { ctime, mtime } = await getFileInfo(env.executable.filename);
+        if (ctime !== -1 && mtime !== -1 && ctime === env.executable.ctime && mtime === env.executable.mtime) {
+            return true;
+        }
+        env.executable.ctime = ctime;
+        env.executable.mtime = mtime;
+        return false;
     }
-    env.executable.ctime = ctime;
-    env.executable.mtime = mtime;
-    return false;
 }
 
 /**
@@ -193,7 +264,16 @@ async function validateInfo(env: PythonEnvInfo) {
  */
 export async function createCollectionCache(storage: IPersistentStorage): Promise<PythonEnvInfoCache> {
     const cache = new PythonEnvInfoCache(storage);
-    await cache.clearAndReloadFromStorage();
-    await cache.validateCache();
+    cache.clearAndReloadFromStorage();
+    await validateCache(cache);
     return cache;
+}
+
+async function validateCache(cache: PythonEnvInfoCache) {
+    if (isTestExecution()) {
+        // For purposes for test execution, block on validation so that we can determinally know when it finishes.
+        return cache.validateCache();
+    }
+    // Validate in background so it doesn't block on returning the API object.
+    return cache.validateCache().ignoreErrors();
 }

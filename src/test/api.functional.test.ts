@@ -5,21 +5,23 @@
 
 import { assert, expect } from 'chai';
 import * as path from 'path';
+import * as sinon from 'sinon';
 import { instance, mock, when } from 'ts-mockito';
-import * as Typemoq from 'typemoq';
-import { Event, Uri } from 'vscode';
 import { buildApi } from '../client/api';
 import { ConfigurationService } from '../client/common/configuration/service';
 import { EXTENSION_ROOT_DIR } from '../client/common/constants';
-import { IConfigurationService } from '../client/common/types';
+import { IConfigurationService, IDisposableRegistry } from '../client/common/types';
+import { IEnvironmentVariablesProvider } from '../client/common/variables/types';
 import { IInterpreterService } from '../client/interpreter/contracts';
 import { InterpreterService } from '../client/interpreter/interpreterService';
 import { ServiceContainer } from '../client/ioc/container';
 import { ServiceManager } from '../client/ioc/serviceManager';
 import { IServiceContainer, IServiceManager } from '../client/ioc/types';
+import { IDiscoveryAPI } from '../client/pythonEnvironments/base/locator';
+import * as pythonDebugger from '../client/debugger/pythonDebugger';
 
 suite('Extension API', () => {
-    const debuggerPath = path.join(EXTENSION_ROOT_DIR, 'pythonFiles', 'lib', 'python', 'debugpy');
+    const debuggerPath = path.join(EXTENSION_ROOT_DIR, 'python_files', 'lib', 'python', 'debugpy');
     const debuggerHost = 'somehost';
     const debuggerPort = 12345;
 
@@ -27,53 +29,33 @@ suite('Extension API', () => {
     let serviceManager: IServiceManager;
     let configurationService: IConfigurationService;
     let interpreterService: IInterpreterService;
+    let discoverAPI: IDiscoveryAPI;
+    let environmentVariablesProvider: IEnvironmentVariablesProvider;
+    let getDebugpyPathStub: sinon.SinonStub;
 
     setup(() => {
         serviceContainer = mock(ServiceContainer);
         serviceManager = mock(ServiceManager);
         configurationService = mock(ConfigurationService);
         interpreterService = mock(InterpreterService);
+        environmentVariablesProvider = mock<IEnvironmentVariablesProvider>();
+        discoverAPI = mock<IDiscoveryAPI>();
+        when(discoverAPI.getEnvs()).thenReturn([]);
 
         when(serviceContainer.get<IConfigurationService>(IConfigurationService)).thenReturn(
             instance(configurationService),
         );
+        when(serviceContainer.get<IEnvironmentVariablesProvider>(IEnvironmentVariablesProvider)).thenReturn(
+            instance(environmentVariablesProvider),
+        );
         when(serviceContainer.get<IInterpreterService>(IInterpreterService)).thenReturn(instance(interpreterService));
+        when(serviceContainer.get<IDisposableRegistry>(IDisposableRegistry)).thenReturn([]);
+        getDebugpyPathStub = sinon.stub(pythonDebugger, 'getDebugpyPath');
+        getDebugpyPathStub.resolves(debuggerPath);
     });
 
-    test('Execution details settings API returns expected object if interpreter is set', async () => {
-        const resource = Uri.parse('a');
-        when(configurationService.getSettings(resource)).thenReturn({ pythonPath: 'settingValue' } as any);
-
-        const execDetails = buildApi(
-            Promise.resolve(),
-            instance(serviceManager),
-            instance(serviceContainer),
-        ).settings.getExecutionDetails(resource);
-
-        assert.deepEqual(execDetails, { execCommand: ['settingValue'] });
-    });
-
-    test('Execution details settings API returns `undefined` if interpreter is set', async () => {
-        const resource = Uri.parse('a');
-        when(configurationService.getSettings(resource)).thenReturn({ pythonPath: '' } as any);
-
-        const execDetails = buildApi(
-            Promise.resolve(),
-            instance(serviceManager),
-            instance(serviceContainer),
-        ).settings.getExecutionDetails(resource);
-
-        assert.deepEqual(execDetails, { execCommand: undefined });
-    });
-
-    test('Provide a callback which is called when interpreter setting changes', async () => {
-        const expectedEvent = Typemoq.Mock.ofType<Event<Uri | undefined>>().object;
-        when(interpreterService.onDidChangeInterpreterConfiguration).thenReturn(expectedEvent);
-
-        const result = buildApi(Promise.resolve(), instance(serviceManager), instance(serviceContainer)).settings
-            .onDidChangeExecutionDetails;
-
-        assert.deepEqual(result, expectedEvent);
+    teardown(() => {
+        sinon.restore();
     });
 
     test('Test debug launcher args (no-wait)', async () => {
@@ -83,6 +65,7 @@ suite('Extension API', () => {
             Promise.resolve(),
             instance(serviceManager),
             instance(serviceContainer),
+            instance(discoverAPI),
         ).debug.getRemoteLauncherCommand(debuggerHost, debuggerPort, waitForAttach);
         const expectedArgs = [
             debuggerPath.fileToCommandArgumentForPythonExt(),
@@ -100,6 +83,7 @@ suite('Extension API', () => {
             Promise.resolve(),
             instance(serviceManager),
             instance(serviceContainer),
+            instance(discoverAPI),
         ).debug.getRemoteLauncherCommand(debuggerHost, debuggerPort, waitForAttach);
         const expectedArgs = [
             debuggerPath.fileToCommandArgumentForPythonExt(),
@@ -116,6 +100,7 @@ suite('Extension API', () => {
             Promise.resolve(),
             instance(serviceManager),
             instance(serviceContainer),
+            instance(discoverAPI),
         ).debug.getDebuggerPackagePath();
 
         assert.strictEqual(pkgPath, debuggerPath);

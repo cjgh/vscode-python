@@ -17,15 +17,14 @@ import {
 import { IEnvironmentVariablesProvider } from '../common/variables/types';
 import { IInterpreterService } from '../interpreter/contracts';
 import { IServiceContainer } from '../ioc/types';
+import { traceError } from '../logging';
 import { PythonEnvironment } from '../pythonEnvironments/info';
-import { LanguageServerCapabilities } from './languageServerCapabilities';
 import { ILanguageServerExtensionManager } from './types';
 
-export class JediLSExtensionManager extends LanguageServerCapabilities
-    implements IDisposable, ILanguageServerExtensionManager {
-    serverManager: JediLanguageServerManager;
+export class JediLSExtensionManager implements IDisposable, ILanguageServerExtensionManager {
+    private serverProxy: JediLanguageServerProxy;
 
-    serverProxy: JediLanguageServerProxy;
+    serverManager: JediLanguageServerManager;
 
     clientFactory: JediLanguageClientFactory;
 
@@ -42,8 +41,6 @@ export class JediLSExtensionManager extends LanguageServerCapabilities
         environmentService: IEnvironmentVariablesProvider,
         commandManager: ICommandManager,
     ) {
-        super();
-
         this.analysisOptions = new JediLanguageServerAnalysisOptions(
             environmentService,
             outputChannel,
@@ -78,10 +75,13 @@ export class JediLSExtensionManager extends LanguageServerCapabilities
     }
 
     // eslint-disable-next-line class-methods-use-this
-    canStartLanguageServer(): boolean {
-        // Return true for now since it's shipped with the extension.
+    canStartLanguageServer(interpreter: PythonEnvironment | undefined): boolean {
+        if (!interpreter) {
+            traceError('Unable to start Jedi language server as a valid interpreter is not selected');
+            return false;
+        }
+        // Otherwise return true for now since it's shipped with the extension.
         // Update this when JediLSP is pulled in a separate extension.
-
         return true;
     }
 

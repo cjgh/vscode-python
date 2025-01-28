@@ -5,9 +5,11 @@
 
 import { inject, injectable, multiInject } from 'inversify';
 import { Terminal } from 'vscode';
-import { IConfigurationService } from '../../types';
+import { IConfigurationService, IExperimentService } from '../../types';
 import { ITerminalActivationHandler, ITerminalActivator, ITerminalHelper, TerminalActivationOptions } from '../types';
 import { BaseTerminalActivator } from './base';
+import { inTerminalEnvVarExperiment } from '../../experiments/helpers';
+import { useEnvExtension } from '../../../envExt/api.internal';
 
 @injectable()
 export class TerminalActivator implements ITerminalActivator {
@@ -17,6 +19,7 @@ export class TerminalActivator implements ITerminalActivator {
         @inject(ITerminalHelper) readonly helper: ITerminalHelper,
         @multiInject(ITerminalActivationHandler) private readonly handlers: ITerminalActivationHandler[],
         @inject(IConfigurationService) private readonly configurationService: IConfigurationService,
+        @inject(IExperimentService) private readonly experimentService: IExperimentService,
     ) {
         this.initialize();
     }
@@ -37,8 +40,9 @@ export class TerminalActivator implements ITerminalActivator {
         options?: TerminalActivationOptions,
     ): Promise<boolean> {
         const settings = this.configurationService.getSettings(options?.resource);
-        const activateEnvironment = settings.terminal.activateEnvironment;
-        if (!activateEnvironment || options?.hideFromUser) {
+        const activateEnvironment =
+            settings.terminal.activateEnvironment && !inTerminalEnvVarExperiment(this.experimentService);
+        if (!activateEnvironment || options?.hideFromUser || useEnvExtension()) {
             return false;
         }
 

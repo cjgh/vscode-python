@@ -12,9 +12,12 @@ export enum PythonEnvKind {
     Unknown = 'unknown',
     // "global"
     System = 'global-system',
-    WindowsStore = 'global-windows-store',
+    MicrosoftStore = 'global-microsoft-store',
     Pyenv = 'global-pyenv',
     Poetry = 'poetry',
+    Hatch = 'hatch',
+    Pixi = 'pixi',
+    ActiveState = 'activestate',
     Custom = 'global-custom',
     OtherGlobal = 'global-other',
     // "virtual"
@@ -24,6 +27,11 @@ export enum PythonEnvKind {
     Pipenv = 'virt-pipenv',
     Conda = 'virt-conda',
     OtherVirtual = 'virt-other',
+}
+
+export enum PythonEnvType {
+    Conda = 'Conda',
+    Virtual = 'Virtual',
 }
 
 export interface EnvPathType {
@@ -38,6 +46,8 @@ export interface EnvPathType {
 
 export const virtualEnvKinds = [
     PythonEnvKind.Poetry,
+    PythonEnvKind.Hatch,
+    PythonEnvKind.Pixi,
     PythonEnvKind.Pipenv,
     PythonEnvKind.Venv,
     PythonEnvKind.VirtualEnvWrapper,
@@ -48,7 +58,7 @@ export const virtualEnvKinds = [
 export const globallyInstalledEnvKinds = [
     PythonEnvKind.OtherGlobal,
     PythonEnvKind.Unknown,
-    PythonEnvKind.WindowsStore,
+    PythonEnvKind.MicrosoftStore,
     PythonEnvKind.System,
     PythonEnvKind.Custom,
 ];
@@ -105,6 +115,7 @@ export enum PythonEnvSource {
 type PythonEnvBaseInfo = {
     id?: string;
     kind: PythonEnvKind;
+    type?: PythonEnvType;
     executable: PythonExecutableInfo;
     // One of (name, location) must be non-empty.
     name: string;
@@ -187,13 +198,19 @@ type _PythonEnvInfo = PythonEnvBaseInfo & PythonBuildInfo;
  * @prop distro - the installed Python distro that this env is using or belongs to
  * @prop display - the text to use when showing the env to users
  * @prop detailedDisplayName - display name containing all details
- * @prop searchLocation - the root under which a locator found this env, if any
+ * @prop searchLocation - the project to which this env is related to, if any
  */
 export type PythonEnvInfo = _PythonEnvInfo & {
     distro: PythonDistroInfo;
     display?: string;
     detailedDisplayName?: string;
     searchLocation?: Uri;
+    /**
+     * Command used to run Python in this environment.
+     * E.g. `conda run -n envName python` or `python.exe`
+     */
+    pythonRunCommand?: string[];
+    identifiedUsingNativeLocator?: boolean;
 };
 
 /**

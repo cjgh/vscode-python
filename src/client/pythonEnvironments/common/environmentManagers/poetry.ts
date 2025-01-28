@@ -10,7 +10,7 @@ import {
     isParentPath,
     pathExists,
     pathExistsSync,
-    readFileSync,
+    readFile,
     shellExecute,
 } from '../externalDependencies';
 import { getEnvironmentDirFromPath } from '../commonUtils';
@@ -19,6 +19,7 @@ import { StopWatch } from '../../../common/utils/stopWatch';
 import { cache } from '../../../common/utils/decorators';
 import { isTestExecution } from '../../../common/constants';
 import { traceError, traceVerbose } from '../../../logging';
+import { splitLines } from '../../../common/stringUtils';
 
 /**
  * Global virtual env dir for a project is named as:
@@ -62,7 +63,7 @@ async function isLocalPoetryEnvironment(interpreterPath: string): Promise<boolea
         return false;
     }
     const project = path.dirname(envDir);
-    if (!hasValidPyprojectToml(project)) {
+    if (!(await hasValidPyprojectToml(project))) {
         return false;
     }
     // The assumption is that we need to be able to run poetry CLI for an environment in order to mark it as poetry.
@@ -125,7 +126,7 @@ export class Poetry {
      */
     public static async getPoetry(cwd: string): Promise<Poetry | undefined> {
         // Following check should be performed synchronously so we trigger poetry execution as soon as possible.
-        if (!hasValidPyprojectToml(cwd)) {
+        if (!(await hasValidPyprojectToml(cwd))) {
             // This check is not expensive and may change during a session, so we need not cache it.
             return undefined;
         }
@@ -142,10 +143,14 @@ export class Poetry {
         traceVerbose(`Getting poetry for cwd ${cwd}`);
         // Produce a list of candidate binaries to be probed by exec'ing them.
         function* getCandidates() {
-            const customPoetryPath = getPythonSetting<string>('poetryPath');
-            if (customPoetryPath && customPoetryPath !== 'poetry') {
-                // If user has specified a custom poetry path, use it first.
-                yield customPoetryPath;
+            try {
+                const customPoetryPath = getPythonSetting<string>('poetryPath');
+                if (customPoetryPath && customPoetryPath !== 'poetry') {
+                    // If user has specified a custom poetry path, use it first.
+                    yield customPoetryPath;
+                }
+            } catch (ex) {
+                traceError(`Failed to get poetry setting`, ex);
             }
             // Check unqualified filename, in case it's on PATH.
             yield 'poetry';
@@ -209,7 +214,7 @@ export class Poetry {
          */
         const activated = '(Activated)';
         const res = await Promise.all(
-            result.stdout.splitLines().map(async (line) => {
+            splitLines(result.stdout).map(async (line) => {
                 if (line.endsWith(activated)) {
                     line = line.slice(0, -activated.length);
                 }
@@ -320,12 +325,12 @@ export async function isPoetryEnvironmentRelatedToFolder(
  *
  * @param folder Folder to look for pyproject.toml file in.
  */
-function hasValidPyprojectToml(folder: string): boolean {
+async function hasValidPyprojectToml(folder: string): Promise<boolean> {
     const pyprojectToml = path.join(folder, 'pyproject.toml');
     if (!pathExistsSync(pyprojectToml)) {
         return false;
     }
-    const content = readFileSync(pyprojectToml);
+    const content = await readFile(pyprojectToml);
     if (!content.includes('[tool.poetry]')) {
         return false;
     }

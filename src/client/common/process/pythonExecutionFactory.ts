@@ -3,19 +3,18 @@
 import { inject, injectable } from 'inversify';
 
 import { IEnvironmentActivationService } from '../../interpreter/activation/types';
-import { IComponentAdapter } from '../../interpreter/contracts';
+import { IActivatedEnvironmentLaunch, IComponentAdapter } from '../../interpreter/contracts';
 import { IServiceContainer } from '../../ioc/types';
 import { sendTelemetryEvent } from '../../telemetry';
 import { EventName } from '../../telemetry/constants';
 import { IFileSystem } from '../platform/types';
 import { IConfigurationService, IDisposableRegistry, IInterpreterPathService } from '../types';
 import { ProcessService } from './proc';
-import { createCondaEnv, createPythonEnv, createWindowsStoreEnv } from './pythonEnvironment';
+import { createCondaEnv, createPythonEnv, createMicrosoftStoreEnv, createPixiEnv } from './pythonEnvironment';
 import { createPythonProcessService } from './pythonProcess';
 import {
     ExecutionFactoryCreateWithEnvironmentOptions,
     ExecutionFactoryCreationOptions,
-    IBufferDecoder,
     IProcessLogger,
     IProcessService,
     IProcessServiceFactory,
@@ -26,6 +25,7 @@ import {
 import { IInterpreterAutoSelectionService } from '../../interpreter/autoSelection/types';
 import { sleep } from '../utils/async';
 import { traceError } from '../../logging';
+import { getPixi, getPixiEnvironmentFromInterpreter } from '../../pythonEnvironments/common/environmentManagers/pixi';
 
 @injectable()
 export class PythonExecutionFactory implements IPythonExecutionFactory {
@@ -40,7 +40,6 @@ export class PythonExecutionFactory implements IPythonExecutionFactory {
         @inject(IEnvironmentActivationService) private readonly activationHelper: IEnvironmentActivationService,
         @inject(IProcessServiceFactory) private readonly processServiceFactory: IProcessServiceFactory,
         @inject(IConfigurationService) private readonly configService: IConfigurationService,
-        @inject(IBufferDecoder) private readonly decoder: IBufferDecoder,
         @inject(IComponentAdapter) private readonly pyenvs: IComponentAdapter,
         @inject(IInterpreterAutoSelectionService) private readonly autoSelection: IInterpreterAutoSelectionService,
         @inject(IInterpreterPathService) private readonly interpreterPathExpHelper: IInterpreterPathService,
@@ -53,7 +52,11 @@ export class PythonExecutionFactory implements IPythonExecutionFactory {
 
     public async create(options: ExecutionFactoryCreationOptions): Promise<IPythonExecutionService> {
         let { pythonPath } = options;
-        if (!pythonPath) {
+        if (!pythonPath || pythonPath === 'python') {
+            const activatedEnvLaunch = this.serviceContainer.get<IActivatedEnvironmentLaunch>(
+                IActivatedEnvironmentLaunch,
+            );
+            await activatedEnvLaunch.selectIfLaunchedViaActivatedEnv();
             // If python path wasn't passed in, we need to auto select it and then read it
             // from the configuration.
             const interpreterPath = this.interpreterPathExpHelper.get(options.resource);
@@ -77,15 +80,22 @@ export class PythonExecutionFactory implements IPythonExecutionFactory {
         }
         const processService: IProcessService = await this.processServiceFactory.create(options.resource);
 
+        if (await getPixi()) {
+            const pixiExecutionService = await this.createPixiExecutionService(pythonPath, processService);
+            if (pixiExecutionService) {
+                return pixiExecutionService;
+            }
+        }
+
         const condaExecutionService = await this.createCondaExecutionService(pythonPath, processService);
         if (condaExecutionService) {
             return condaExecutionService;
         }
 
-        const windowsStoreInterpreterCheck = this.pyenvs.isWindowsStoreInterpreter.bind(this.pyenvs);
+        const windowsStoreInterpreterCheck = this.pyenvs.isMicrosoftStoreInterpreter.bind(this.pyenvs);
 
         const env = (await windowsStoreInterpreterCheck(pythonPath))
-            ? createWindowsStoreEnv(pythonPath, processService)
+            ? createMicrosoftStoreEnv(pythonPath, processService)
             : createPythonEnv(pythonPath, processService, this.fileSystem);
 
         return createPythonService(processService, env);
@@ -110,14 +120,22 @@ export class PythonExecutionFactory implements IPythonExecutionFactory {
         const pythonPath = options.interpreter
             ? options.interpreter.path
             : this.configService.getSettings(options.resource).pythonPath;
-        const processService: IProcessService = new ProcessService(this.decoder, { ...envVars });
+        const processService: IProcessService = new ProcessService({ ...envVars });
         processService.on('exec', this.logger.logProcess.bind(this.logger));
         this.disposables.push(processService);
+
+        if (await getPixi()) {
+            const pixiExecutionService = await this.createPixiExecutionService(pythonPath, processService);
+            if (pixiExecutionService) {
+                return pixiExecutionService;
+            }
+        }
 
         const condaExecutionService = await this.createCondaExecutionService(pythonPath, processService);
         if (condaExecutionService) {
             return condaExecutionService;
         }
+
         const env = createPythonEnv(pythonPath, processService, this.fileSystem);
         return createPythonService(processService, env);
     }
@@ -136,6 +154,23 @@ export class PythonExecutionFactory implements IPythonExecutionFactory {
             return undefined;
         }
         return createPythonService(processService, env);
+    }
+
+    public async createPixiExecutionService(
+        pythonPath: string,
+        processService: IProcessService,
+    ): Promise<IPythonExecutionService | undefined> {
+        const pixiEnvironment = await getPixiEnvironmentFromInterpreter(pythonPath);
+        if (!pixiEnvironment) {
+            return undefined;
+        }
+
+        const env = await createPixiEnv(pixiEnvironment, processService, this.fileSystem);
+        if (env) {
+            return createPythonService(processService, env);
+        }
+
+        return undefined;
     }
 }
 

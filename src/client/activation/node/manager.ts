@@ -7,13 +7,14 @@ import { IDisposable, IExtensions, Resource } from '../../common/types';
 import { debounceSync } from '../../common/utils/decorators';
 import { IServiceContainer } from '../../ioc/types';
 import { PythonEnvironment } from '../../pythonEnvironments/info';
-import { captureTelemetry } from '../../telemetry';
+import { captureTelemetry, sendTelemetryEvent } from '../../telemetry';
 import { EventName } from '../../telemetry/constants';
 import { Commands } from '../commands';
 import { NodeLanguageClientMiddleware } from './languageClientMiddleware';
-import { ILanguageServerAnalysisOptions, ILanguageServerManager, ILanguageServerProxy } from '../types';
+import { ILanguageServerAnalysisOptions, ILanguageServerManager } from '../types';
 import { traceDecoratorError, traceDecoratorVerbose } from '../../logging';
 import { PYLANCE_EXTENSION_ID } from '../../common/constants';
+import { NodeLanguageServerProxy } from './languageServerProxy';
 
 export class NodeLanguageServerManager implements ILanguageServerManager {
     private resource!: Resource;
@@ -35,7 +36,7 @@ export class NodeLanguageServerManager implements ILanguageServerManager {
     constructor(
         private readonly serviceContainer: IServiceContainer,
         private readonly analysisOptions: ILanguageServerAnalysisOptions,
-        private readonly languageServerProxy: ILanguageServerProxy,
+        private readonly languageServerProxy: NodeLanguageServerProxy,
         commandManager: ICommandManager,
         private readonly extensions: IExtensions,
     ) {
@@ -43,6 +44,7 @@ export class NodeLanguageServerManager implements ILanguageServerManager {
             NodeLanguageServerManager.commandDispose.dispose();
         }
         NodeLanguageServerManager.commandDispose = commandManager.registerCommand(Commands.RestartLS, () => {
+            sendTelemetryEvent(EventName.LANGUAGE_SERVER_RESTART, undefined, { reason: 'command' });
             this.restartLanguageServer().ignoreErrors();
         });
     }
@@ -57,10 +59,6 @@ export class NodeLanguageServerManager implements ILanguageServerManager {
         this.stopLanguageServer().ignoreErrors();
         NodeLanguageServerManager.commandDispose.dispose();
         this.disposables.forEach((d) => d.dispose());
-    }
-
-    public get languageProxy(): ILanguageServerProxy {
-        return this.languageServerProxy;
     }
 
     @traceDecoratorError('Failed to start language server')
@@ -97,6 +95,7 @@ export class NodeLanguageServerManager implements ILanguageServerManager {
 
     @debounceSync(1000)
     protected restartLanguageServerDebounced(): void {
+        sendTelemetryEvent(EventName.LANGUAGE_SERVER_RESTART, undefined, { reason: 'settings' });
         this.restartLanguageServer().ignoreErrors();
     }
 

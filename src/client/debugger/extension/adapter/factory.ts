@@ -10,23 +10,35 @@ import {
     DebugAdapterExecutable,
     DebugAdapterServer,
     DebugSession,
+    l10n,
     WorkspaceFolder,
 } from 'vscode';
-import { IApplicationShell } from '../../../common/application/types';
 import { EXTENSION_ROOT_DIR } from '../../../constants';
 import { IInterpreterService } from '../../../interpreter/contracts';
-import { traceLog, traceVerbose } from '../../../logging';
+import { traceError, traceLog, traceVerbose } from '../../../logging';
 import { PythonEnvironment } from '../../../pythonEnvironments/info';
 import { sendTelemetryEvent } from '../../../telemetry';
 import { EventName } from '../../../telemetry/constants';
 import { AttachRequestArguments, LaunchRequestArguments } from '../../types';
 import { IDebugAdapterDescriptorFactory } from '../types';
+import { showErrorMessage } from '../../../common/vscodeApis/windowApis';
+import { Common, Interpreters } from '../../../common/utils/localize';
+import { IPersistentStateFactory } from '../../../common/types';
+import { Commands } from '../../../common/constants';
+import { ICommandManager } from '../../../common/application/types';
+import { getDebugpyPath } from '../../pythonDebugger';
+
+// persistent state names, exported to make use of in testing
+export enum debugStateKeys {
+    doNotShowAgain = 'doNotShowPython36DebugDeprecatedAgain',
+}
 
 @injectable()
 export class DebugAdapterDescriptorFactory implements IDebugAdapterDescriptorFactory {
     constructor(
+        @inject(ICommandManager) private readonly commandManager: ICommandManager,
         @inject(IInterpreterService) private readonly interpreterService: IInterpreterService,
-        @inject(IApplicationShell) private readonly appShell: IApplicationShell,
+        @inject(IPersistentStateFactory) private persistentState: IPersistentStateFactory,
     ) {}
 
     public async createDebugAdapterDescriptor(
@@ -79,15 +91,12 @@ export class DebugAdapterDescriptorFactory implements IDebugAdapterDescriptorFac
                 traceLog(`DAP Server launched with command: ${executable} ${args.join(' ')}`);
                 return new DebugAdapterExecutable(executable, args);
             }
-
-            const debuggerAdapterPathToUse = path.join(
-                EXTENSION_ROOT_DIR,
-                'pythonFiles',
-                'lib',
-                'python',
-                'debugpy',
-                'adapter',
-            );
+            const debugpyPath = await getDebugpyPath();
+            if (!debugpyPath) {
+                traceError('Could not find debugpy path.');
+                throw new Error('Could not find debugpy path.');
+            }
+            const debuggerAdapterPathToUse = path.join(debugpyPath, 'adapter');
 
             const args = command.concat([debuggerAdapterPathToUse, ...logArgs]);
             traceLog(`DAP Server launched with command: ${executable} ${args.join(' ')}`);
@@ -142,8 +151,42 @@ export class DebugAdapterDescriptorFactory implements IDebugAdapterDescriptorFac
         return this.getExecutableCommand(interpreters[0]);
     }
 
+    private async showDeprecatedPythonMessage() {
+        const notificationPromptEnabled = this.persistentState.createGlobalPersistentState(
+            debugStateKeys.doNotShowAgain,
+            false,
+        );
+        if (notificationPromptEnabled.value) {
+            return;
+        }
+        const prompts = [Interpreters.changePythonInterpreter, Common.doNotShowAgain];
+        const selection = await showErrorMessage(
+            l10n.t('The debugger in the python extension no longer supports python versions minor than 3.7.'),
+            { modal: true },
+            ...prompts,
+        );
+        if (!selection) {
+            return;
+        }
+        if (selection == Interpreters.changePythonInterpreter) {
+            await this.commandManager.executeCommand(Commands.Set_Interpreter);
+        }
+        if (selection == Common.doNotShowAgain) {
+            // Never show the message again
+            await this.persistentState
+                .createGlobalPersistentState(debugStateKeys.doNotShowAgain, false)
+                .updateValue(true);
+        }
+    }
+
     private async getExecutableCommand(interpreter: PythonEnvironment | undefined): Promise<string[]> {
         if (interpreter) {
+            if (
+                (interpreter.version?.major ?? 0) < 3 ||
+                ((interpreter.version?.major ?? 0) <= 3 && (interpreter.version?.minor ?? 0) <= 6)
+            ) {
+                this.showDeprecatedPythonMessage();
+            }
             return interpreter.path.length > 0 ? [interpreter.path] : [];
         }
         return [];
@@ -158,8 +201,6 @@ export class DebugAdapterDescriptorFactory implements IDebugAdapterDescriptorFac
      * @memberof DebugAdapterDescriptorFactory
      */
     private async notifySelectInterpreter() {
-        await this.appShell.showErrorMessage(
-            'Please install Python or select a Python Interpreter to use the debugger.',
-        );
+        await showErrorMessage(l10n.t('Install Python or select a Python Interpreter to use the debugger.'));
     }
 }

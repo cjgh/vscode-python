@@ -1,9 +1,9 @@
 import { Disposable } from 'vscode';
 import { IActiveResourceService, ICommandManager } from '../common/application/types';
 import { Commands } from '../common/constants';
+import { noop } from '../common/utils/misc';
+import { IInterpreterService } from '../interpreter/contracts';
 import { IServiceContainer } from '../ioc/types';
-import { captureTelemetry } from '../telemetry';
-import { EventName } from '../telemetry/constants';
 import { ICodeExecutionService } from '../terminals/types';
 
 export class ReplProvider implements Disposable {
@@ -26,10 +26,18 @@ export class ReplProvider implements Disposable {
         this.disposables.push(disposable);
     }
 
-    @captureTelemetry(EventName.REPL)
     private async commandHandler() {
         const resource = this.activeResourceService.getActiveResource();
-        const replProvider = this.serviceContainer.get<ICodeExecutionService>(ICodeExecutionService, 'repl');
+        const interpreterService = this.serviceContainer.get<IInterpreterService>(IInterpreterService);
+        const interpreter = await interpreterService.getActiveInterpreter(resource);
+        if (!interpreter) {
+            this.serviceContainer
+                .get<ICommandManager>(ICommandManager)
+                .executeCommand(Commands.TriggerEnvironmentSelection, resource)
+                .then(noop, noop);
+            return;
+        }
+        const replProvider = this.serviceContainer.get<ICodeExecutionService>(ICodeExecutionService, 'standard');
         await replProvider.initializeRepl(resource);
     }
 }

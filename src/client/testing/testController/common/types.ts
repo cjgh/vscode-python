@@ -4,6 +4,7 @@
 import {
     CancellationToken,
     Event,
+    FileCoverageDetail,
     OutputChannel,
     TestController,
     TestItem,
@@ -12,12 +13,9 @@ import {
     Uri,
     WorkspaceFolder,
 } from 'vscode';
-import { TestDiscoveryOptions } from '../../common/types';
-
-export type TestRunInstanceOptions = TestRunOptions & {
-    exclude?: readonly TestItem[];
-    debug: boolean;
-};
+import { ITestDebugLauncher } from '../../common/types';
+import { IPythonExecutionFactory } from '../../../common/process/types';
+import { PythonEnvironment } from '../../../pythonEnvironments/info';
 
 export enum TestDataKinds {
     Workspace,
@@ -35,11 +33,6 @@ export interface TestData {
     kind: TestDataKinds;
 }
 
-export const ITestDiscoveryHelper = Symbol('ITestDiscoveryHelper');
-export interface ITestDiscoveryHelper {
-    runTestDiscovery(options: TestDiscoveryOptions): Promise<RawDiscoveredTests[]>;
-}
-
 export type TestRefreshOptions = { forceRefresh: boolean };
 
 export const ITestController = Symbol('ITestController');
@@ -51,41 +44,13 @@ export interface ITestController {
     onRunWithoutConfiguration: Event<WorkspaceFolder[]>;
 }
 
-export interface ITestRun {
-    includes: readonly TestItem[];
-    excludes: readonly TestItem[];
-    runKind: TestRunProfileKind;
-    runInstance: TestRun;
-}
-
 export const ITestFrameworkController = Symbol('ITestFrameworkController');
 export interface ITestFrameworkController {
     resolveChildren(testController: TestController, item: TestItem, token?: CancellationToken): Promise<void>;
-    refreshTestData(testController: TestController, resource?: Uri, token?: CancellationToken): Promise<void>;
-    runTests(
-        testRun: ITestRun,
-        workspace: WorkspaceFolder,
-        token: CancellationToken,
-        testController?: TestController,
-    ): Promise<void>;
 }
 
 export const ITestsRunner = Symbol('ITestsRunner');
-export interface ITestsRunner {
-    runTests(
-        testRun: ITestRun,
-        options: TestRunOptions,
-        idToRawData: Map<string, TestData>,
-        testController?: TestController,
-    ): Promise<void>;
-}
-
-export type TestRunOptions = {
-    workspaceFolder: Uri;
-    cwd: string;
-    args: string[];
-    token: CancellationToken;
-};
+export interface ITestsRunner {}
 
 // We expose these here as a convenience and to cut down on churn
 // elsewhere in the code.
@@ -127,7 +92,7 @@ export type RawDiscoveredTests = {
 // New test discovery adapter types
 
 export type DataReceivedEvent = {
-    cwd: string;
+    uuid: string;
     data: string;
 };
 
@@ -136,30 +101,86 @@ export type TestDiscoveryCommand = {
     args: string[];
 };
 
+export type TestExecutionCommand = {
+    script: string;
+    args: string[];
+};
+
 export type TestCommandOptions = {
     workspaceFolder: Uri;
     cwd: string;
-    command: TestDiscoveryCommand;
+    command: TestDiscoveryCommand | TestExecutionCommand;
     token?: CancellationToken;
     outChannel?: OutputChannel;
+    profileKind?: TestRunProfileKind;
+    testIds?: string[];
 };
 
-/**
- * Interface describing the server that will send test commands to the Python side, and process responses.
- *
- * Consumers will call sendCommand in order to execute Python-related code,
- * and will subscribe to the onDataReceived event to wait for the results.
- */
-export interface ITestServer {
-    readonly onDataReceived: Event<DataReceivedEvent>;
-    sendCommand(options: TestCommandOptions): Promise<void>;
-}
+// /**
+//  * Interface describing the server that will send test commands to the Python side, and process responses.
+//  *
+//  * Consumers will call sendCommand in order to execute Python-related code,
+//  * and will subscribe to the onDataReceived event to wait for the results.
+//  */
+// export interface ITestServer {
+//     readonly onDataReceived: Event<DataReceivedEvent>;
+//     readonly onRunDataReceived: Event<DataReceivedEvent>;
+//     readonly onDiscoveryDataReceived: Event<DataReceivedEvent>;
+//     sendCommand(
+//         options: TestCommandOptions,
+//         env: EnvironmentVariables,
+//         runTestIdsPort?: string,
+//         runInstance?: TestRun,
+//         testIds?: string[],
+//         callback?: () => void,
+//         executionFactory?: IPythonExecutionFactory,
+//     ): Promise<void>;
+//     serverReady(): Promise<void>;
+//     getPort(): number;
+//     createUUID(cwd: string): string;
+//     deleteUUID(uuid: string): void;
+//     triggerRunDataReceivedEvent(data: DataReceivedEvent): void;
+//     triggerDiscoveryDataReceivedEvent(data: DataReceivedEvent): void;
+// }
+export interface ITestResultResolver {
+    runIdToVSid: Map<string, string>;
+    runIdToTestItem: Map<string, TestItem>;
+    vsIdToRunId: Map<string, string>;
+    detailedCoverageMap: Map<string, FileCoverageDetail[]>;
 
+    resolveDiscovery(payload: DiscoveredTestPayload, token?: CancellationToken): void;
+    resolveExecution(payload: ExecutionTestPayload | CoveragePayload, runInstance: TestRun): void;
+    _resolveDiscovery(payload: DiscoveredTestPayload, token?: CancellationToken): void;
+    _resolveExecution(payload: ExecutionTestPayload, runInstance: TestRun): void;
+    _resolveCoverage(payload: CoveragePayload, runInstance: TestRun): void;
+}
 export interface ITestDiscoveryAdapter {
-    discoverTests(uri: Uri): Promise<DiscoveredTestPayload>;
+    // ** first line old method signature, second line new method signature
+    discoverTests(uri: Uri): Promise<void>;
+    discoverTests(
+        uri: Uri,
+        executionFactory?: IPythonExecutionFactory,
+        token?: CancellationToken,
+        interpreter?: PythonEnvironment,
+    ): Promise<void>;
 }
 
-// Same types as in pythonFiles/unittestadapter/utils.py
+// interface for execution/runner adapter
+export interface ITestExecutionAdapter {
+    // ** first line old method signature, second line new method signature
+    runTests(uri: Uri, testIds: string[], profileKind?: boolean | TestRunProfileKind): Promise<void>;
+    runTests(
+        uri: Uri,
+        testIds: string[],
+        profileKind?: boolean | TestRunProfileKind,
+        runInstance?: TestRun,
+        executionFactory?: IPythonExecutionFactory,
+        debugLauncher?: ITestDebugLauncher,
+        interpreter?: PythonEnvironment,
+    ): Promise<void>;
+}
+
+// Same types as in python_files/unittestadapter/utils.py
 export type DiscoveredTestType = 'folder' | 'file' | 'class' | 'test';
 
 export type DiscoveredTestCommon = {
@@ -167,12 +188,12 @@ export type DiscoveredTestCommon = {
     name: string;
     // Trailing underscore to avoid collision with the 'type' Python keyword.
     type_: DiscoveredTestType;
+    id_: string;
 };
 
 export type DiscoveredTestItem = DiscoveredTestCommon & {
     lineno: number;
-    // Trailing underscore to avoid collision with the 'id' Python keyword.
-    id_: string;
+    runID: string;
 };
 
 export type DiscoveredTestNode = DiscoveredTestCommon & {
@@ -183,5 +204,38 @@ export type DiscoveredTestPayload = {
     cwd: string;
     tests?: DiscoveredTestNode;
     status: 'success' | 'error';
-    errors?: string[];
+    error?: string[];
+};
+
+export type CoveragePayload = {
+    coverage: boolean;
+    cwd: string;
+    result?: {
+        [filePathStr: string]: FileCoverageMetrics;
+    };
+    error: string;
+};
+
+// using camel-case for these types to match the python side
+export type FileCoverageMetrics = {
+    // eslint-disable-next-line camelcase
+    lines_covered: number[];
+    // eslint-disable-next-line camelcase
+    lines_missed: number[];
+};
+
+export type ExecutionTestPayload = {
+    cwd: string;
+    status: 'success' | 'error';
+    result?: {
+        [testRunID: string]: {
+            test?: string;
+            outcome?: string;
+            message?: string;
+            traceback?: string;
+            subtest?: string;
+        };
+    };
+    notFound?: string[];
+    error: string;
 };

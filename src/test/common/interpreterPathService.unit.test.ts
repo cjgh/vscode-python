@@ -14,8 +14,12 @@ import {
     Uri,
     WorkspaceConfiguration,
 } from 'vscode';
-import { IWorkspaceService } from '../../client/common/application/types';
-import { defaultInterpreterPathSetting, InterpreterPathService } from '../../client/common/interpreterPathService';
+import { IApplicationEnvironment, IWorkspaceService } from '../../client/common/application/types';
+import {
+    defaultInterpreterPathSetting,
+    getCIPythonPath,
+    InterpreterPathService,
+} from '../../client/common/interpreterPathService';
 import { FileSystemPaths } from '../../client/common/platform/fs-paths';
 import { InterpreterConfigurationScope, IPersistentState, IPersistentStateFactory } from '../../client/common/types';
 import { createDeferred, sleep } from '../../client/common/utils/async';
@@ -24,6 +28,7 @@ suite('Interpreter Path Service', async () => {
     let interpreterPathService: InterpreterPathService;
     let persistentStateFactory: TypeMoq.IMock<IPersistentStateFactory>;
     let workspaceService: TypeMoq.IMock<IWorkspaceService>;
+    let appEnvironment: TypeMoq.IMock<IApplicationEnvironment>;
     const resource = Uri.parse('a');
     const resourceOutsideOfWorkspace = Uri.parse('b');
     const interpreterPath = 'path/to/interpreter';
@@ -31,6 +36,8 @@ suite('Interpreter Path Service', async () => {
     setup(() => {
         const event = TypeMoq.Mock.ofType<Event<ConfigurationChangeEvent>>();
         workspaceService = TypeMoq.Mock.ofType<IWorkspaceService>();
+        appEnvironment = TypeMoq.Mock.ofType<IApplicationEnvironment>();
+        appEnvironment.setup((a) => a.remoteName).returns(() => undefined);
         workspaceService
             .setup((w) => w.getWorkspaceFolder(resource))
             .returns(() => ({
@@ -41,7 +48,12 @@ suite('Interpreter Path Service', async () => {
         workspaceService.setup((w) => w.getWorkspaceFolder(resourceOutsideOfWorkspace)).returns(() => undefined);
         persistentStateFactory = TypeMoq.Mock.ofType<IPersistentStateFactory>();
         workspaceService.setup((w) => w.onDidChangeConfiguration).returns(() => event.object);
-        interpreterPathService = new InterpreterPathService(persistentStateFactory.object, workspaceService.object, []);
+        interpreterPathService = new InterpreterPathService(
+            persistentStateFactory.object,
+            workspaceService.object,
+            [],
+            appEnvironment.object,
+        );
     });
 
     teardown(() => {
@@ -439,7 +451,8 @@ suite('Interpreter Path Service', async () => {
             workspaceValue: undefined,
         });
         const settingValue = interpreterPathService.get(resource);
-        expect(settingValue).to.equal('python');
+
+        expect(settingValue).to.equal(getCIPythonPath());
     });
 
     test('If defaultInterpreterPathSetting is changed, an event is fired', async () => {

@@ -13,6 +13,7 @@ import * as platformApis from '../../../../../client/common/utils/platform';
 import {
     PythonEnvInfo,
     PythonEnvKind,
+    PythonEnvType,
     PythonVersion,
     UNKNOWN_PYTHON_VERSION,
 } from '../../../../../client/pythonEnvironments/base/info';
@@ -37,6 +38,7 @@ import { createBasicEnv, getEnvs, getEnvsWithUpdates, SimpleLocator } from '../.
 import { getOSType, OSType } from '../../../../common';
 import { CondaInfo } from '../../../../../client/pythonEnvironments/common/environmentManagers/conda';
 import { createDeferred } from '../../../../../client/common/utils/async';
+import * as workspaceApis from '../../../../../client/common/vscodeApis/workspaceApis';
 
 suite('Python envs locator - Environments Resolver', () => {
     let envInfoService: IEnvironmentInfoService;
@@ -55,7 +57,11 @@ suite('Python envs locator - Environments Resolver', () => {
     /**
      * Returns the expected environment to be returned by Environment info service
      */
-    function createExpectedEnvInfo(env: PythonEnvInfo, expectedDisplay: string): PythonEnvInfo {
+    function createExpectedEnvInfo(
+        env: PythonEnvInfo,
+        expectedDisplay: string,
+        expectedDetailedDisplay: string,
+    ): PythonEnvInfo {
         const updatedEnv = cloneDeep(env);
         updatedEnv.version = {
             ...parseVersion('3.8.3-final'),
@@ -65,7 +71,12 @@ suite('Python envs locator - Environments Resolver', () => {
         updatedEnv.executable.sysPrefix = 'path';
         updatedEnv.arch = Architecture.x64;
         updatedEnv.display = expectedDisplay;
-        updatedEnv.detailedDisplayName = expectedDisplay;
+        updatedEnv.detailedDisplayName = expectedDetailedDisplay;
+        updatedEnv.identifiedUsingNativeLocator = updatedEnv.identifiedUsingNativeLocator ?? undefined;
+        updatedEnv.pythonRunCommand = updatedEnv.pythonRunCommand ?? undefined;
+        if (env.kind === PythonEnvKind.Conda) {
+            env.type = PythonEnvType.Conda;
+        }
         return updatedEnv;
     }
 
@@ -76,6 +87,8 @@ suite('Python envs locator - Environments Resolver', () => {
         name = '',
         location = '',
         display: string | undefined = undefined,
+        type?: PythonEnvType,
+        detailedDisplay?: string,
     ): PythonEnvInfo {
         return {
             name,
@@ -88,12 +101,15 @@ suite('Python envs locator - Environments Resolver', () => {
                 mtime: -1,
             },
             display,
-            detailedDisplayName: display,
+            detailedDisplayName: detailedDisplay ?? display,
             version,
             arch: Architecture.Unknown,
             distro: { org: '' },
-            searchLocation: Uri.file(path.dirname(location)),
+            searchLocation: Uri.file(location),
             source: [],
+            type,
+            identifiedUsingNativeLocator: undefined,
+            pythonRunCommand: undefined,
         };
     }
     suite('iterEnvs()', () => {
@@ -109,7 +125,7 @@ suite('Python envs locator - Environments Resolver', () => {
                     });
                 }),
             );
-            sinon.stub(externalDependencies, 'getWorkspaceFolders').returns([testVirtualHomeDir]);
+            sinon.stub(workspaceApis, 'getWorkspaceFolderPaths').returns([testVirtualHomeDir]);
         });
 
         teardown(() => {
@@ -127,6 +143,8 @@ suite('Python envs locator - Environments Resolver', () => {
                 undefined,
                 'win1',
                 path.join(testVirtualHomeDir, '.venvs', 'win1'),
+                "Python ('win1')",
+                PythonEnvType.Virtual,
                 "Python ('win1': venv)",
             );
             const envsReturnedByParentLocator = [env1];
@@ -151,6 +169,8 @@ suite('Python envs locator - Environments Resolver', () => {
                 undefined,
                 'win1',
                 path.join(testVirtualHomeDir, '.venvs', 'win1'),
+                undefined,
+                PythonEnvType.Virtual,
             );
             const envsReturnedByParentLocator = [env1];
             const parentLocator = new SimpleLocator<BasicEnvInfo>(envsReturnedByParentLocator);
@@ -160,7 +180,11 @@ suite('Python envs locator - Environments Resolver', () => {
             const envs = await getEnvsWithUpdates(iterator);
 
             assertEnvsEqual(envs, [
-                createExpectedEnvInfo(resolvedEnvReturnedByBasicResolver, "Python 3.8.3 ('win1': venv)"),
+                createExpectedEnvInfo(
+                    resolvedEnvReturnedByBasicResolver,
+                    "Python 3.8.3 ('win1')",
+                    "Python 3.8.3 ('win1': venv)",
+                ),
             ]);
         });
 
@@ -193,19 +217,21 @@ suite('Python envs locator - Environments Resolver', () => {
         test('Updates to environments from the incoming iterator are applied properly', async () => {
             // Arrange
             const env = createBasicEnv(
-                PythonEnvKind.Venv,
+                PythonEnvKind.Unknown,
                 path.join(testVirtualHomeDir, '.venvs', 'win1', 'python.exe'),
             );
             const updatedEnv = createBasicEnv(
-                PythonEnvKind.Poetry,
+                PythonEnvKind.VirtualEnv, // Ensure this type is discarded.
                 path.join(testVirtualHomeDir, '.venvs', 'win1', 'python.exe'),
             );
             const resolvedUpdatedEnvReturnedByBasicResolver = createExpectedResolvedEnvInfo(
                 path.join(testVirtualHomeDir, '.venvs', 'win1', 'python.exe'),
-                PythonEnvKind.Poetry,
+                PythonEnvKind.Venv,
                 undefined,
                 'win1',
                 path.join(testVirtualHomeDir, '.venvs', 'win1'),
+                undefined,
+                PythonEnvType.Virtual,
             );
             const envsReturnedByParentLocator = [env];
             const didUpdate = new EventEmitter<PythonEnvUpdatedEvent<BasicEnvInfo> | ProgressNotificationEvent>();
@@ -225,7 +251,11 @@ suite('Python envs locator - Environments Resolver', () => {
 
             // Assert
             assertEnvsEqual(envs, [
-                createExpectedEnvInfo(resolvedUpdatedEnvReturnedByBasicResolver, "Python 3.8.3 ('win1': poetry)"),
+                createExpectedEnvInfo(
+                    resolvedUpdatedEnvReturnedByBasicResolver,
+                    "Python 3.8.3 ('win1')",
+                    "Python 3.8.3 ('win1': venv)",
+                ),
             ]);
             didUpdate.dispose();
         });
@@ -338,7 +368,7 @@ suite('Python envs locator - Environments Resolver', () => {
                     });
                 }),
             );
-            sinon.stub(externalDependencies, 'getWorkspaceFolders').returns([testVirtualHomeDir]);
+            sinon.stub(workspaceApis, 'getWorkspaceFolderPaths').returns([testVirtualHomeDir]);
         });
 
         teardown(() => {
@@ -355,6 +385,8 @@ suite('Python envs locator - Environments Resolver', () => {
                 undefined,
                 'win1',
                 path.join(testVirtualHomeDir, '.venvs', 'win1'),
+                undefined,
+                PythonEnvType.Virtual,
             );
             const parentLocator = new SimpleLocator([]);
             const resolver = new PythonEnvsResolver(parentLocator, envInfoService);
@@ -363,7 +395,11 @@ suite('Python envs locator - Environments Resolver', () => {
 
             assertEnvEqual(
                 expected,
-                createExpectedEnvInfo(resolvedEnvReturnedByBasicResolver, "Python 3.8.3 ('win1': venv)"),
+                createExpectedEnvInfo(
+                    resolvedEnvReturnedByBasicResolver,
+                    "Python 3.8.3 ('win1')",
+                    "Python 3.8.3 ('win1': venv)",
+                ),
             );
         });
 

@@ -2,15 +2,11 @@
 // Licensed under the MIT License.
 import { IExtensionSingleActivationService } from '../activation/types';
 import {
-    IAsyncDisposableRegistry,
     IBrowserService,
     IConfigurationService,
     ICurrentProcess,
-    IEditorUtils,
     IExperimentService,
     IExtensions,
-    IFileDownloader,
-    IHttpClient,
     IInstaller,
     IInterpreterPathService,
     IPathUtils,
@@ -31,7 +27,6 @@ import { ClipboardService } from './application/clipboard';
 import { CommandManager } from './application/commandManager';
 import { ReloadVSCodeCommandHandler } from './application/commands/reloadCommand';
 import { ReportIssueCommandHandler } from './application/commands/reportIssueCommand';
-import { CreatePythonFileCommandHandler } from './application/commands/createFileCommand';
 import { DebugService } from './application/debugService';
 import { DebugSessionTelemetry } from './application/debugSessionTelemetry';
 import { DocumentManager } from './application/documentManager';
@@ -53,18 +48,13 @@ import {
     IWorkspaceService,
 } from './application/types';
 import { WorkspaceService } from './application/workspace';
-import { AsyncDisposableRegistry } from './asyncDisposableRegistry';
 import { ConfigurationService } from './configuration/service';
 import { PipEnvExecutionPath } from './configuration/executionSettings/pipEnvExecution';
-import { EditorUtils } from './editor';
 import { ExperimentService } from './experiments/service';
 import { ProductInstaller } from './installer/productInstaller';
 import { InterpreterPathService } from './interpreterPathService';
 import { BrowserService } from './net/browser';
-import { FileDownloader } from './net/fileDownloader';
-import { HttpClient } from './net/httpClient';
 import { PersistentStateFactory } from './persistentState';
-import { IS_WINDOWS } from './platform/constants';
 import { PathUtils } from './platform/pathUtils';
 import { CurrentProcess } from './process/currentProcess';
 import { ProcessLogger } from './process/logger';
@@ -72,6 +62,7 @@ import { IProcessLogger } from './process/types';
 import { TerminalActivator } from './terminal/activator';
 import { PowershellTerminalActivationFailedHandler } from './terminal/activator/powershellFailedHandler';
 import { Bash } from './terminal/environmentActivationProviders/bash';
+import { Nushell } from './terminal/environmentActivationProviders/nushell';
 import { CommandPromptAndPowerShell } from './terminal/environmentActivationProviders/commandPrompt';
 import { CondaActivationCommandProvider } from './terminal/environmentActivationProviders/condaActivationProvider';
 import { PipEnvActivationCommandProvider } from './terminal/environmentActivationProviders/pipEnvActivationProvider';
@@ -95,9 +86,13 @@ import {
 import { IMultiStepInputFactory, MultiStepInputFactory } from './utils/multiStepInput';
 import { Random } from './utils/random';
 import { ContextKeyManager } from './application/contextKeyManager';
+import { CreatePythonFileCommandHandler } from './application/commands/createPythonFile';
+import { RequireJupyterPrompt } from '../jupyter/requireJupyterPrompt';
+import { isWindows } from './utils/platform';
+import { PixiActivationCommandProvider } from './terminal/environmentActivationProviders/pixiActivationProvider';
 
 export function registerTypes(serviceManager: IServiceManager): void {
-    serviceManager.addSingletonInstance<boolean>(IsWindows, IS_WINDOWS);
+    serviceManager.addSingletonInstance<boolean>(IsWindows, isWindows());
 
     serviceManager.addSingleton<IActiveResourceService>(IActiveResourceService, ActiveResourceService);
     serviceManager.addSingleton<IInterpreterPathService>(IInterpreterPathService, InterpreterPathService);
@@ -115,6 +110,14 @@ export function registerTypes(serviceManager: IServiceManager): void {
         IJupyterExtensionDependencyManager,
         JupyterExtensionDependencyManager,
     );
+    serviceManager.addSingleton<IExtensionSingleActivationService>(
+        IExtensionSingleActivationService,
+        RequireJupyterPrompt,
+    );
+    serviceManager.addSingleton<IExtensionSingleActivationService>(
+        IExtensionSingleActivationService,
+        CreatePythonFileCommandHandler,
+    );
     serviceManager.addSingleton<ICommandManager>(ICommandManager, CommandManager);
     serviceManager.addSingleton<IContextKeyManager>(IContextKeyManager, ContextKeyManager);
     serviceManager.addSingleton<IConfigurationService>(IConfigurationService, ConfigurationService);
@@ -126,9 +129,6 @@ export function registerTypes(serviceManager: IServiceManager): void {
     serviceManager.addSingleton<IApplicationEnvironment>(IApplicationEnvironment, ApplicationEnvironment);
     serviceManager.addSingleton<ILanguageService>(ILanguageService, LanguageService);
     serviceManager.addSingleton<IBrowserService>(IBrowserService, BrowserService);
-    serviceManager.addSingleton<IHttpClient>(IHttpClient, HttpClient);
-    serviceManager.addSingleton<IFileDownloader>(IFileDownloader, FileDownloader);
-    serviceManager.addSingleton<IEditorUtils>(IEditorUtils, EditorUtils);
     serviceManager.addSingleton<ITerminalActivator>(ITerminalActivator, TerminalActivator);
     serviceManager.addSingleton<ITerminalActivationHandler>(
         ITerminalActivationHandler,
@@ -149,6 +149,11 @@ export function registerTypes(serviceManager: IServiceManager): void {
     );
     serviceManager.addSingleton<ITerminalActivationCommandProvider>(
         ITerminalActivationCommandProvider,
+        Nushell,
+        TerminalActivationProviders.nushell,
+    );
+    serviceManager.addSingleton<ITerminalActivationCommandProvider>(
+        ITerminalActivationCommandProvider,
         PyEnvActivationCommandProvider,
         TerminalActivationProviders.pyenv,
     );
@@ -159,12 +164,16 @@ export function registerTypes(serviceManager: IServiceManager): void {
     );
     serviceManager.addSingleton<ITerminalActivationCommandProvider>(
         ITerminalActivationCommandProvider,
+        PixiActivationCommandProvider,
+        TerminalActivationProviders.pixi,
+    );
+    serviceManager.addSingleton<ITerminalActivationCommandProvider>(
+        ITerminalActivationCommandProvider,
         PipEnvActivationCommandProvider,
         TerminalActivationProviders.pipenv,
     );
     serviceManager.addSingleton<IToolExecutionPath>(IToolExecutionPath, PipEnvExecutionPath, ToolExecutionPath.pipenv);
 
-    serviceManager.addSingleton<IAsyncDisposableRegistry>(IAsyncDisposableRegistry, AsyncDisposableRegistry);
     serviceManager.addSingleton<IMultiStepInputFactory>(IMultiStepInputFactory, MultiStepInputFactory);
     serviceManager.addSingleton<IImportTracker>(IImportTracker, ImportTracker);
     serviceManager.addBinding(IImportTracker, IExtensionSingleActivationService);
@@ -179,10 +188,6 @@ export function registerTypes(serviceManager: IServiceManager): void {
     serviceManager.addSingleton<IExtensionSingleActivationService>(
         IExtensionSingleActivationService,
         ReportIssueCommandHandler,
-    );
-    serviceManager.addSingleton<IExtensionSingleActivationService>(
-        IExtensionSingleActivationService,
-        CreatePythonFileCommandHandler,
     );
     serviceManager.addSingleton<IExtensionSingleActivationService>(
         IExtensionSingleActivationService,

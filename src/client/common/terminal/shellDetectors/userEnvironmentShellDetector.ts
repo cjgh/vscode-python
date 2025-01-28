@@ -5,7 +5,6 @@
 
 import { inject, injectable } from 'inversify';
 import { Terminal } from 'vscode';
-import { traceVerbose } from '../../../logging';
 import { IPlatformService } from '../../platform/types';
 import { ICurrentProcess } from '../../types';
 import { OSType } from '../../utils/platform';
@@ -14,10 +13,6 @@ import { BaseShellDetector } from './baseShellDetector';
 
 /**
  * Identifies the shell based on the users environment (env variables).
- *
- * @export
- * @class UserEnvironmentShellDetector
- * @extends {BaseShellDetector}
  */
 @injectable()
 export class UserEnvironmentShellDetector extends BaseShellDetector {
@@ -41,7 +36,6 @@ export class UserEnvironmentShellDetector extends BaseShellDetector {
         if (shell !== TerminalShellType.other) {
             telemetryProperties.shellIdentificationSource = 'environment';
         }
-        traceVerbose(`Shell path from user env '${shellPath}'`);
         return shell;
     }
 }

@@ -2,7 +2,6 @@
 // Licensed under the MIT License.
 
 import * as assert from 'assert';
-import { LspNotebooksExperiment } from '../../client/activation/node/lspNotebooksExperiment';
 import { ILanguageServerOutputChannel } from '../../client/activation/types';
 import { IWorkspaceService, ICommandManager, IApplicationShell } from '../../client/common/application/types';
 import { IFileSystem } from '../../client/common/platform/types';
@@ -38,14 +37,12 @@ suite('Language Server - Pylance LS extension manager', () => {
             {} as IFileSystem,
             {} as IExtensions,
             {} as IApplicationShell,
-            {} as LspNotebooksExperiment,
         );
     });
 
     test('Constructor should create a client proxy, a server manager and a server proxy', () => {
         assert.notStrictEqual(manager.clientFactory, undefined);
         assert.notStrictEqual(manager.serverManager, undefined);
-        assert.notStrictEqual(manager.serverProxy, undefined);
     });
 
     test('canStartLanguageServer should return true if Pylance is installed', () => {
@@ -68,7 +65,6 @@ suite('Language Server - Pylance LS extension manager', () => {
                 getExtension: () => ({}),
             } as unknown) as IExtensions,
             {} as IApplicationShell,
-            {} as LspNotebooksExperiment,
         );
 
         const result = manager.canStartLanguageServer();
@@ -96,7 +92,6 @@ suite('Language Server - Pylance LS extension manager', () => {
                 getExtension: () => undefined,
             } as unknown) as IExtensions,
             {} as IApplicationShell,
-            {} as LspNotebooksExperiment,
         );
 
         const result = manager.canStartLanguageServer();

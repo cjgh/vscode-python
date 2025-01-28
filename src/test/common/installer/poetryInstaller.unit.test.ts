@@ -50,12 +50,14 @@ suite('Module Installer - Poetry', () => {
             switch (command) {
                 case 'poetry env list --full-path':
                     return Promise.resolve<ExecutionResult<string>>({ stdout: '' });
-                case 'poetry env info -p':
-                    if (options.cwd && externalDependencies.arePathsSame(options.cwd, project1)) {
+                case 'poetry env info -p': {
+                    const cwd = typeof options.cwd === 'string' ? options.cwd : options.cwd?.toString();
+                    if (cwd && externalDependencies.arePathsSame(cwd, project1)) {
                         return Promise.resolve<ExecutionResult<string>>({
                             stdout: `${path.join(project1, '.venv')} \n`,
                         });
                     }
+                }
             }
             return Promise.reject(new Error('Command failed'));
         });
@@ -103,7 +105,7 @@ suite('Module Installer - Poetry', () => {
 
         const info = await poetryInstaller.getExecutionInfo('something', uri);
 
-        assert.deepEqual(info, { args: ['add', '--dev', 'something'], execPath: 'poetry path' });
+        assert.deepEqual(info, { args: ['add', '--group', 'dev', 'something'], execPath: 'poetry path' });
     });
     test('Get executable info when installing black', async () => {
         const uri = Uri.file(__dirname);
@@ -115,7 +117,7 @@ suite('Module Installer - Poetry', () => {
         const info = await poetryInstaller.getExecutionInfo('black', uri);
 
         assert.deepEqual(info, {
-            args: ['add', '--dev', 'black', '--allow-prereleases'],
+            args: ['add', '--group', 'dev', 'black'],
             execPath: 'poetry path',
         });
     });

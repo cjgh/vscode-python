@@ -7,7 +7,7 @@ import { injectable } from 'inversify';
 import * as os from 'os';
 import { coerce, SemVer } from 'semver';
 import { getSearchPathEnvVarNames } from '../utils/exec';
-import { Architecture, getArchitecture, getOSType, OSType } from '../utils/platform';
+import { Architecture, getArchitecture, getOSType, isWindows, OSType } from '../utils/platform';
 import { parseSemVerSafe } from '../utils/version';
 import { IPlatformService } from './types';
 
@@ -50,8 +50,9 @@ export class PlatformService implements IPlatformService {
         }
     }
 
+    // eslint-disable-next-line class-methods-use-this
     public get isWindows(): boolean {
-        return this.osType === OSType.Windows;
+        return isWindows();
     }
 
     public get isMac(): boolean {

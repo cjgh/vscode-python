@@ -3,8 +3,9 @@
 
 import * as assert from 'assert';
 import { exec } from 'child_process';
-import { zip } from 'lodash';
+import { cloneDeep, zip } from 'lodash';
 import { promisify } from 'util';
+import * as fsapi from '../../../../client/common/platform/fs-paths';
 import { PythonEnvInfo, PythonVersion, UNKNOWN_PYTHON_VERSION } from '../../../../client/pythonEnvironments/base/info';
 import { getEmptyVersion } from '../../../../client/pythonEnvironments/base/info/pythonVersion';
 import { BasicEnvInfo } from '../../../../client/pythonEnvironments/base/locator';
@@ -40,17 +41,30 @@ export function assertVersionsEqual(actual: PythonVersion | undefined, expected:
     assert.deepStrictEqual(actual, expected);
 }
 
+export async function createFile(filename: string, text = ''): Promise<string> {
+    await fsapi.writeFile(filename, text);
+    return filename;
+}
+
+export async function deleteFile(filename: string): Promise<void> {
+    await fsapi.remove(filename);
+}
+
 export function assertEnvEqual(actual: PythonEnvInfo | undefined, expected: PythonEnvInfo | undefined): void {
     assert.notStrictEqual(actual, undefined);
     assert.notStrictEqual(expected, undefined);
 
     if (actual) {
+        // Make sure to clone so we do not alter the original object
+        actual = cloneDeep(actual);
+        expected = cloneDeep(expected);
         // No need to match these, so reset them
         actual.executable.ctime = -1;
         actual.executable.mtime = -1;
-
         actual.version = normalizeVersion(actual.version);
         if (expected) {
+            expected.executable.ctime = -1;
+            expected.executable.mtime = -1;
             expected.version = normalizeVersion(expected.version);
             delete expected.id;
         }
@@ -78,17 +92,23 @@ export function assertEnvsEqual(
 }
 
 export function assertBasicEnvsEqual(actualEnvs: BasicEnvInfo[], expectedEnvs: BasicEnvInfo[]): void {
-    actualEnvs = actualEnvs.sort((a, b) => a.executablePath.localeCompare(b.executablePath));
-    expectedEnvs = expectedEnvs.sort((a, b) => a.executablePath.localeCompare(b.executablePath));
+    actualEnvs = actualEnvs
+        .sort((a, b) => a.executablePath.localeCompare(b.executablePath))
+        .map((c) => ({ ...c, executablePath: c.executablePath.toLowerCase() }));
+    expectedEnvs = expectedEnvs
+        .sort((a, b) => a.executablePath.localeCompare(b.executablePath))
+        .map((c) => ({ ...c, executablePath: c.executablePath.toLowerCase() }));
     assert.deepStrictEqual(actualEnvs.length, expectedEnvs.length, 'Number of envs');
     zip(actualEnvs, expectedEnvs).forEach((value) => {
         const [actual, expected] = value;
         if (actual) {
             actual.source = actual.source ?? [];
+            actual.searchLocation = actual.searchLocation ?? undefined;
             actual.source.sort();
         }
         if (expected) {
             expected.source = expected.source ?? [];
+            expected.searchLocation = expected.searchLocation ?? undefined;
             expected.source.sort();
         }
         assert.deepStrictEqual(actual, expected);

@@ -3,7 +3,7 @@
 
 import { expect } from 'chai';
 import * as path from 'path';
-import { Event } from 'vscode';
+import { Event, Uri } from 'vscode';
 import { createDeferred, flattenIterator, iterable, mapToIterator } from '../../../client/common/utils/async';
 import { getArchitecture } from '../../../client/common/utils/platform';
 import { getVersionString } from '../../../client/common/utils/version';
@@ -35,6 +35,7 @@ export function createLocatedEnv(
     kind = PythonEnvKind.Unknown,
     exec: string | PythonExecutableInfo = 'python',
     distro: PythonDistroInfo = { org: '' },
+    searchLocation?: Uri,
 ): PythonEnvInfo {
     const location =
         locationStr === ''
@@ -57,6 +58,7 @@ export function createLocatedEnv(
         executable,
         location,
         version,
+        searchLocation,
     });
     env.arch = getArchitecture();
     env.distro = distro;
@@ -95,12 +97,14 @@ export function createNamedEnv(
 }
 
 export class SimpleLocator<I = PythonEnvInfo> extends Locator<I> {
+    public readonly providerId: string = 'SimpleLocator';
+
     private deferred = createDeferred<void>();
 
     constructor(
         private envs: I[],
         public callbacks: {
-            resolve?: null | ((env: PythonEnvInfo) => Promise<PythonEnvInfo | undefined>);
+            resolve?: null | ((env: PythonEnvInfo | string) => Promise<PythonEnvInfo | undefined>);
             before?(): Promise<void>;
             after?(): Promise<void>;
             onUpdated?: Event<PythonEnvUpdatedEvent<I> | ProgressNotificationEvent>;
@@ -108,6 +112,7 @@ export class SimpleLocator<I = PythonEnvInfo> extends Locator<I> {
             afterEach?(e: I): Promise<void>;
             onQuery?(query: PythonLocatorQuery | undefined, envs: I[]): Promise<I[]>;
         } = {},
+        private options?: { resolveAsString?: boolean },
     ) {
         super();
     }
@@ -168,7 +173,7 @@ export class SimpleLocator<I = PythonEnvInfo> extends Locator<I> {
         if (this.callbacks?.resolve === null) {
             return undefined;
         }
-        return this.callbacks.resolve(envInfo);
+        return this.callbacks.resolve(this.options?.resolveAsString ? env : envInfo);
     }
 }
 
@@ -198,7 +203,7 @@ export async function getEnvsWithUpdates<I = PythonEnvInfo>(
                 }
                 updatesDone.resolve();
                 listener.dispose();
-            } else {
+            } else if (event.index !== undefined) {
                 const { index, update } = event;
                 // We don't worry about if envs[index] is set already.
                 envs[index] = update;

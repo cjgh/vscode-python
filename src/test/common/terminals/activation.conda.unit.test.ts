@@ -3,7 +3,6 @@
 
 import { expect } from 'chai';
 import * as path from 'path';
-import { parse } from 'semver';
 import { anything, instance, mock, when } from 'ts-mockito';
 import * as TypeMoq from 'typemoq';
 import { Disposable } from 'vscode';
@@ -13,6 +12,7 @@ import { IFileSystem, IPlatformService } from '../../../client/common/platform/t
 import { IProcessService, IProcessServiceFactory } from '../../../client/common/process/types';
 import { Bash } from '../../../client/common/terminal/environmentActivationProviders/bash';
 import { CommandPromptAndPowerShell } from '../../../client/common/terminal/environmentActivationProviders/commandPrompt';
+import { Nushell } from '../../../client/common/terminal/environmentActivationProviders/nushell';
 import {
     CondaActivationCommandProvider,
     _getPowershellCommands,
@@ -31,6 +31,7 @@ import { getNamesAndValues } from '../../../client/common/utils/enum';
 import { IComponentAdapter, ICondaService } from '../../../client/interpreter/contracts';
 import { InterpreterService } from '../../../client/interpreter/interpreterService';
 import { IServiceContainer } from '../../../client/ioc/types';
+import { PixiActivationCommandProvider } from '../../../client/common/terminal/environmentActivationProviders/pixiActivationProvider';
 
 suite('Terminal Environment Activation conda', () => {
     let terminalHelper: TerminalHelper;
@@ -111,8 +112,10 @@ suite('Terminal Environment Activation conda', () => {
             ),
             instance(bash),
             mock(CommandPromptAndPowerShell),
+            mock(Nushell),
             mock(PyEnvActivationCommandProvider),
             mock(PipEnvActivationCommandProvider),
+            mock(PixiActivationCommandProvider),
             [],
         );
     });
@@ -145,37 +148,6 @@ suite('Terminal Environment Activation conda', () => {
         expect(activationCommands).to.deep.equal(expected, 'Incorrect Activation command');
     });
 
-    test('Conda activation on bash uses "source" before 4.4.0', async () => {
-        const envName = 'EnvA';
-        const pythonPath = 'python3';
-        const condaPath = path.join('a', 'b', 'c', 'conda');
-        platformService.setup((p) => p.isWindows).returns(() => false);
-        condaService.reset();
-        componentAdapter
-            .setup((c) => c.getCondaEnvironment(TypeMoq.It.isAny()))
-            .returns(() =>
-                Promise.resolve({
-                    name: envName,
-                    path: path.dirname(pythonPath),
-                }),
-            );
-        condaService.setup((c) => c.getCondaFile()).returns(() => Promise.resolve(condaPath));
-        condaService.setup((c) => c.getCondaVersion()).returns(() => Promise.resolve(parse('4.3.1', true)!));
-        const expected = [
-            `source ${path.join(path.dirname(condaPath), 'activate').fileToCommandArgumentForPythonExt()} EnvA`,
-        ];
-
-        const provider = new CondaActivationCommandProvider(
-            condaService.object,
-            platformService.object,
-            configService.object,
-            componentAdapter.object,
-        );
-        const activationCommands = await provider.getActivationCommands(undefined, TerminalShellType.bash);
-
-        expect(activationCommands).to.deep.equal(expected, 'Incorrect Activation command');
-    });
-
     test('Conda activation on bash uses "conda" after 4.4.0', async () => {
         const envName = 'EnvA';
         const pythonPath = 'python3';
@@ -191,7 +163,6 @@ suite('Terminal Environment Activation conda', () => {
                 }),
             );
         condaService.setup((c) => c.getCondaFile()).returns(() => Promise.resolve(condaPath));
-        condaService.setup((c) => c.getCondaVersion()).returns(() => Promise.resolve(parse('4.4.0', true)!));
         const expected = [
             `source ${path.join(path.dirname(condaPath), 'activate').fileToCommandArgumentForPythonExt()} EnvA`,
         ];
@@ -308,7 +279,6 @@ suite('Terminal Environment Activation conda', () => {
                         path: path.dirname(pythonPath),
                     }),
                 );
-            condaService.setup((c) => c.getCondaVersion()).returns(() => Promise.resolve(parse('4.4.0', true)!));
             condaService
                 .setup((c) => c.getCondaFileFromInterpreter(TypeMoq.It.isAny(), TypeMoq.It.isAny()))
                 .returns(() => Promise.resolve(interpreterPath));
@@ -332,7 +302,10 @@ suite('Terminal Environment Activation conda', () => {
                 componentAdapter.object,
             );
 
-            const activationCommands = await provider.getActivationCommands(undefined, TerminalShellType.bash);
+            const activationCommands = await provider.getActivationCommands(
+                undefined,
+                testParams.isWindows ? TerminalShellType.commandPrompt : TerminalShellType.bash,
+            );
 
             expect(activationCommands).to.deep.equal(testParams.expectedResult, 'Incorrect Activation command');
         });

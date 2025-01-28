@@ -3,9 +3,8 @@
 
 // eslint-disable-next-line max-classes-per-file
 import { inject, injectable } from 'inversify';
-import { DiagnosticSeverity } from 'vscode';
+import { DiagnosticSeverity, l10n } from 'vscode';
 import '../../../common/extensions';
-import * as nls from 'vscode-nls';
 import { IPlatformService } from '../../../common/platform/types';
 import {
     IConfigurationService,
@@ -21,12 +20,10 @@ import { IDiagnosticsCommandFactory } from '../commands/types';
 import { DiagnosticCodes } from '../constants';
 import { DiagnosticCommandPromptHandlerServiceId, MessageCommandPrompt } from '../promptHandler';
 import { DiagnosticScope, IDiagnostic, IDiagnosticCommand, IDiagnosticHandlerService } from '../types';
-
-const localize: nls.LocalizeFunc = nls.loadMessageBundle();
+import { Common } from '../../../common/utils/localize';
 
 const messages = {
-    [DiagnosticCodes.MacInterpreterSelected]: localize(
-        'DiagnosticCodes.MacInterpreterSelected',
+    [DiagnosticCodes.MacInterpreterSelected]: l10n.t(
         'The selected macOS system install of Python is not recommended, some functionality in the extension will be limited. [Install another version of Python](https://www.python.org/downloads) or select a different interpreter for the best experience. [Learn more](https://aka.ms/AA7jfor).',
     ),
 };
@@ -43,7 +40,7 @@ export const InvalidMacPythonInterpreterServiceId = 'InvalidMacPythonInterpreter
 export class InvalidMacPythonInterpreterService extends BaseDiagnosticsService {
     protected changeThrottleTimeout = 1000;
 
-    private timeOut?: NodeJS.Timer | number;
+    private timeOut?: NodeJS.Timeout | number;
 
     constructor(
         @inject(IServiceContainer) serviceContainer: IServiceContainer,
@@ -124,14 +121,14 @@ export class InvalidMacPythonInterpreterService extends BaseDiagnosticsService {
             case DiagnosticCodes.MacInterpreterSelected: {
                 return [
                     {
-                        prompt: 'Select Python Interpreter',
+                        prompt: Common.selectPythonInterpreter,
                         command: commandFactory.createCommand(diagnostic, {
                             type: 'executeVSCCommand',
                             options: 'python.setInterpreter',
                         }),
                     },
                     {
-                        prompt: 'Do not show again',
+                        prompt: Common.doNotShowAgain,
                         command: commandFactory.createCommand(diagnostic, {
                             type: 'ignore',
                             options: DiagnosticScope.Global,

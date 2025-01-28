@@ -17,9 +17,9 @@ process.env.VSC_PYTHON_PERF_TEST = '1';
 
 import { spawn } from 'child_process';
 import * as download from 'download';
-import * as fs from 'fs-extra';
+import * as fs from '../client/common/platform/fs-paths';
 import * as path from 'path';
-import * as request from 'request';
+import * as bent from 'bent';
 import { LanguageServerType } from '../client/activation/types';
 import { EXTENSION_ROOT_DIR, PVSC_EXTENSION_ID } from '../client/common/constants';
 import { unzip } from './common';
@@ -123,17 +123,9 @@ class TestRunner {
 
     private async getReleaseVersion(): Promise<string> {
         const url = `https://marketplace.visualstudio.com/items?itemName=${PVSC_EXTENSION_ID}`;
-        const content = await new Promise<string>((resolve, reject) => {
-            request(url, (error, response, body) => {
-                if (error) {
-                    return reject(error);
-                }
-                if (response.statusCode === 200) {
-                    return resolve(body);
-                }
-                reject(`Status code of ${response.statusCode} received.`);
-            });
-        });
+        const request = bent.default('string', 'GET', 200);
+
+        const content: string = await request(url);
         const re = NamedRegexp('"version"S?:S?"(:<version>\\d{4}\\.\\d{1,2}\\.\\d{1,2})"', 'g');
         const matches = re.exec(content);
         return matches.groups().version;
@@ -151,7 +143,7 @@ class TestRunner {
             return destination;
         }
 
-        await download(url, path.dirname(destination), { filename: path.basename(destination) });
+        await download.default(url, path.dirname(destination), { filename: path.basename(destination) });
         return destination;
     }
 }

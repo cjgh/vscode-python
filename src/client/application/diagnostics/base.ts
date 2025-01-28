@@ -7,6 +7,7 @@ import { injectable, unmanaged } from 'inversify';
 import { DiagnosticSeverity } from 'vscode';
 import { IWorkspaceService } from '../../common/application/types';
 import { IDisposable, IDisposableRegistry, Resource } from '../../common/types';
+import { asyncFilter } from '../../common/utils/arrayUtils';
 import { IServiceContainer } from '../../ioc/types';
 import { sendTelemetryEvent } from '../../telemetry';
 import { EventName } from '../../telemetry/constants';
@@ -21,8 +22,8 @@ export abstract class BaseDiagnostic implements IDiagnostic {
         public readonly severity: DiagnosticSeverity,
         public readonly scope: DiagnosticScope,
         public readonly resource: Resource,
-        public readonly invokeHandler: 'always' | 'default' = 'default',
         public readonly shouldShowPrompt = true,
+        public readonly invokeHandler: 'always' | 'default' = 'default',
     ) {}
 }
 
@@ -33,7 +34,7 @@ export abstract class BaseDiagnosticsService implements IDiagnosticsService, IDi
     constructor(
         @unmanaged() private readonly supportedDiagnosticCodes: string[],
         @unmanaged() protected serviceContainer: IServiceContainer,
-        @unmanaged() disposableRegistry: IDisposableRegistry,
+        @unmanaged() protected disposableRegistry: IDisposableRegistry,
         @unmanaged() public readonly runInBackground: boolean = false,
         @unmanaged() public readonly runInUntrustedWorkspace: boolean = false,
     ) {
@@ -48,7 +49,10 @@ export abstract class BaseDiagnosticsService implements IDiagnosticsService, IDi
         if (diagnostics.length === 0) {
             return;
         }
-        const diagnosticsToHandle = diagnostics.filter((item) => {
+        const diagnosticsToHandle = await asyncFilter(diagnostics, async (item) => {
+            if (!(await this.canHandle(item))) {
+                return false;
+            }
             if (item.invokeHandler && item.invokeHandler === 'always') {
                 return true;
             }
@@ -69,11 +73,6 @@ export abstract class BaseDiagnosticsService implements IDiagnosticsService, IDi
     /**
      * Returns a key used to keep track of whether a diagnostic was handled or not.
      * So as to prevent handling/displaying messages multiple times for the same diagnostic.
-     *
-     * @protected
-     * @param {IDiagnostic} diagnostic
-     * @returns {string}
-     * @memberof BaseDiagnosticsService
      */
     protected getDiagnosticsKey(diagnostic: IDiagnostic): string {
         if (diagnostic.scope === DiagnosticScope.Global) {

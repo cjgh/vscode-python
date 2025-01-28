@@ -2,15 +2,19 @@
 // Licensed under the MIT License.
 import { expect } from 'chai';
 import * as TypeMoq from 'typemoq';
+import * as sinon from 'sinon';
 import { Disposable, TextDocument, TextEditor, Uri } from 'vscode';
 
 import { ICommandManager, IDocumentManager, IWorkspaceService } from '../../../client/common/application/types';
 import { Commands } from '../../../client/common/constants';
-import { IFileSystem } from '../../../client/common/platform/types';
 import { IServiceContainer } from '../../../client/ioc/types';
 import { CodeExecutionManager } from '../../../client/terminals/codeExecution/codeExecutionManager';
 import { ICodeExecutionHelper, ICodeExecutionManager, ICodeExecutionService } from '../../../client/terminals/types';
 import { IConfigurationService } from '../../../client/common/types';
+import { IInterpreterService } from '../../../client/interpreter/contracts';
+import { PythonEnvironment } from '../../../client/pythonEnvironments/info';
+import * as triggerApis from '../../../client/pythonEnvironments/creation/createEnvironmentTrigger';
+import * as extapi from '../../../client/envExt/api.internal';
 
 suite('Terminal - Code Execution Manager', () => {
     let executionManager: ICodeExecutionManager;
@@ -20,10 +24,13 @@ suite('Terminal - Code Execution Manager', () => {
     let serviceContainer: TypeMoq.IMock<IServiceContainer>;
     let documentManager: TypeMoq.IMock<IDocumentManager>;
     let configService: TypeMoq.IMock<IConfigurationService>;
-    let fileSystem: TypeMoq.IMock<IFileSystem>;
+    let interpreterService: TypeMoq.IMock<IInterpreterService>;
+    let triggerCreateEnvironmentCheckNonBlockingStub: sinon.SinonStub;
+    let useEnvExtensionStub: sinon.SinonStub;
     setup(() => {
-        fileSystem = TypeMoq.Mock.ofType<IFileSystem>();
-        fileSystem.setup((f) => f.readFile(TypeMoq.It.isAny())).returns(() => Promise.resolve(''));
+        useEnvExtensionStub = sinon.stub(extapi, 'useEnvExtension');
+        useEnvExtensionStub.returns(false);
+
         workspace = TypeMoq.Mock.ofType<IWorkspaceService>();
         workspace
             .setup((c) => c.onDidChangeWorkspaceFolders(TypeMoq.It.isAny(), TypeMoq.It.isAny(), TypeMoq.It.isAny()))
@@ -36,16 +43,26 @@ suite('Terminal - Code Execution Manager', () => {
         commandManager = TypeMoq.Mock.ofType<ICommandManager>(undefined, TypeMoq.MockBehavior.Strict);
         serviceContainer = TypeMoq.Mock.ofType<IServiceContainer>();
         configService = TypeMoq.Mock.ofType<IConfigurationService>();
+        interpreterService = TypeMoq.Mock.ofType<IInterpreterService>();
+        interpreterService
+            .setup((i) => i.getActiveInterpreter(TypeMoq.It.isAny()))
+            .returns(() => Promise.resolve(({ path: 'ps' } as unknown) as PythonEnvironment));
+        serviceContainer.setup((c) => c.get(IInterpreterService)).returns(() => interpreterService.object);
         executionManager = new CodeExecutionManager(
             commandManager.object,
             documentManager.object,
             disposables,
-            fileSystem.object,
             configService.object,
             serviceContainer.object,
         );
+        triggerCreateEnvironmentCheckNonBlockingStub = sinon.stub(
+            triggerApis,
+            'triggerCreateEnvironmentCheckNonBlocking',
+        );
+        triggerCreateEnvironmentCheckNonBlockingStub.returns(undefined);
     });
     teardown(() => {
+        sinon.restore();
         disposables.forEach((disposable) => {
             if (disposable) {
                 disposable.dispose();
@@ -69,12 +86,15 @@ suite('Terminal - Code Execution Manager', () => {
         executionManager.registerCommands();
 
         const sorted = registered.sort();
-        expect(sorted).to.deep.equal([
-            Commands.Exec_In_Terminal,
-            Commands.Exec_In_Terminal_Icon,
-            Commands.Exec_Selection_In_Django_Shell,
-            Commands.Exec_Selection_In_Terminal,
-        ]);
+        expect(sorted).to.deep.equal(
+            [
+                Commands.Exec_In_Separate_Terminal,
+                Commands.Exec_In_Terminal,
+                Commands.Exec_In_Terminal_Icon,
+                Commands.Exec_Selection_In_Django_Shell,
+                Commands.Exec_Selection_In_Terminal,
+            ].sort(),
+        );
     });
 
     test('Ensure executeFileInterTerminal will do nothing if no file is avialble', async () => {
@@ -127,7 +147,10 @@ suite('Terminal - Code Execution Manager', () => {
         const fileToExecute = Uri.file('x');
         await commandHandler!(fileToExecute);
         helper.verify(async (h) => h.getFileToExecute(), TypeMoq.Times.never());
-        executionService.verify(async (e) => e.executeFile(TypeMoq.It.isValue(fileToExecute)), TypeMoq.Times.once());
+        executionService.verify(
+            async (e) => e.executeFile(TypeMoq.It.isValue(fileToExecute), TypeMoq.It.isAny()),
+            TypeMoq.Times.once(),
+        );
     });
 
     test('Ensure executeFileInterTerminal will use active file', async () => {
@@ -156,7 +179,10 @@ suite('Terminal - Code Execution Manager', () => {
             .returns(() => executionService.object);
 
         await commandHandler!(fileToExecute);
-        executionService.verify(async (e) => e.executeFile(TypeMoq.It.isValue(fileToExecute)), TypeMoq.Times.once());
+        executionService.verify(
+            async (e) => e.executeFile(TypeMoq.It.isValue(fileToExecute), TypeMoq.It.isAny()),
+            TypeMoq.Times.once(),
+        );
     });
 
     async function testExecutionOfSelectionWithoutAnyActiveDocument(commandId: string, executionSericeId: string) {

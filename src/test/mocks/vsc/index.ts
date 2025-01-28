@@ -6,6 +6,7 @@
 
 import { EventEmitter as NodeEventEmitter } from 'events';
 import * as vscode from 'vscode';
+
 // export * from './range';
 // export * from './position';
 // export * from './selection';
@@ -15,6 +16,18 @@ export * as vscUri from './uri';
 const escapeCodiconsRegex = /(\\)?\$\([a-z0-9\-]+?(?:~[a-z0-9\-]*?)?\)/gi;
 export function escapeCodicons(text: string): string {
     return text.replace(escapeCodiconsRegex, (match, escaped) => (escaped ? match : `\\${match}`));
+}
+
+export class ThemeIcon {
+    static readonly File: ThemeIcon;
+
+    static readonly Folder: ThemeIcon;
+
+    constructor(public readonly id: string, public readonly color?: ThemeColor) {}
+}
+
+export class ThemeColor {
+    constructor(public readonly id: string) {}
 }
 
 export enum ExtensionKind {
@@ -41,13 +54,69 @@ export enum QuickPickItemKind {
 }
 
 export class Disposable {
-    constructor(private callOnDispose: () => void) {}
+    static from(...disposables: { dispose(): () => void }[]): Disposable {
+        return new Disposable(() => {
+            if (disposables) {
+                for (const disposable of disposables) {
+                    if (disposable && typeof disposable.dispose === 'function') {
+                        disposable.dispose();
+                    }
+                }
 
-    public dispose(): void {
-        if (this.callOnDispose) {
-            this.callOnDispose();
+                disposables = [];
+            }
+        });
+    }
+
+    private _callOnDispose: (() => void) | undefined;
+
+    constructor(callOnDispose: () => void) {
+        this._callOnDispose = callOnDispose;
+    }
+
+    dispose(): void {
+        if (typeof this._callOnDispose === 'function') {
+            this._callOnDispose();
+            this._callOnDispose = undefined;
         }
     }
+}
+
+// eslint-disable-next-line @typescript-eslint/no-namespace
+export namespace l10n {
+    export function t(message: string, ...args: unknown[]): string;
+    export function t(options: {
+        message: string;
+        args?: Array<string | number | boolean> | Record<string, unknown>;
+        comment: string | string[];
+    }): string;
+
+    export function t(
+        message:
+            | string
+            | {
+                  message: string;
+                  args?: Array<string | number | boolean> | Record<string, unknown>;
+                  comment: string | string[];
+              },
+        ...args: unknown[]
+    ): string {
+        let _message = message;
+        let _args: unknown[] | Record<string, unknown> | undefined = args;
+        if (typeof message !== 'string') {
+            _message = message.message;
+            _args = message.args ?? args;
+        }
+
+        if ((_args as Array<string>).length > 0) {
+            return (_message as string).replace(/{(\d+)}/g, (match, number) =>
+                (_args as Array<string>)[number] === undefined ? match : (_args as Array<string>)[number],
+            );
+        }
+        return _message as string;
+    }
+    export const bundle: { [key: string]: string } | undefined = undefined;
+    export const uri: vscode.Uri | undefined = undefined;
 }
 
 export class EventEmitter<T> implements vscode.EventEmitter<T> {
@@ -235,7 +304,7 @@ export class MarkdownString {
         // escape markdown syntax tokens: http://daringfireball.net/projects/markdown/syntax#backslash
         this.value += (this.supportThemeIcons ? escapeCodicons(value) : value)
             .replace(/[\\`*_{}[\]()#+\-.!]/g, '\\$&')
-            .replace(/\n/, '\n\n');
+            .replace(/\n/g, '\n\n');
 
         return this;
     }
@@ -290,6 +359,8 @@ export class CodeActionKind {
 
     public static readonly RefactorInline: CodeActionKind = new CodeActionKind('refactor.inline');
 
+    public static readonly RefactorMove: CodeActionKind = new CodeActionKind('refactor.move');
+
     public static readonly RefactorRewrite: CodeActionKind = new CodeActionKind('refactor.rewrite');
 
     public static readonly Source: CodeActionKind = new CodeActionKind('source');
@@ -297,6 +368,8 @@ export class CodeActionKind {
     public static readonly SourceOrganizeImports: CodeActionKind = new CodeActionKind('source.organize.imports');
 
     public static readonly SourceFixAll: CodeActionKind = new CodeActionKind('source.fix.all');
+
+    public static readonly Notebook: CodeActionKind = new CodeActionKind('notebook');
 
     private constructor(private _value: string) {}
 
@@ -359,4 +432,165 @@ export class InlayHint {
         public label: string | vscode.InlayHintLabelPart[],
         public kind?: vscode.InlayHintKind,
     ) {}
+}
+
+export enum LogLevel {
+    /**
+     * No messages are logged with this level.
+     */
+    Off = 0,
+
+    /**
+     * All messages are logged with this level.
+     */
+    Trace = 1,
+
+    /**
+     * Messages with debug and higher log level are logged with this level.
+     */
+    Debug = 2,
+
+    /**
+     * Messages with info and higher log level are logged with this level.
+     */
+    Info = 3,
+
+    /**
+     * Messages with warning and higher log level are logged with this level.
+     */
+    Warning = 4,
+
+    /**
+     * Only error messages are logged with this level.
+     */
+    Error = 5,
+}
+
+export class TestMessage {
+    /**
+     * Human-readable message text to display.
+     */
+    message: string | MarkdownString;
+
+    /**
+     * Expected test output. If given with {@link TestMessage.actualOutput actualOutput }, a diff view will be shown.
+     */
+    expectedOutput?: string;
+
+    /**
+     * Actual test output. If given with {@link TestMessage.expectedOutput expectedOutput }, a diff view will be shown.
+     */
+    actualOutput?: string;
+
+    /**
+     * Associated file location.
+     */
+    location?: vscode.Location;
+
+    /**
+     * Creates a new TestMessage that will present as a diff in the editor.
+     * @param message Message to display to the user.
+     * @param expected Expected output.
+     * @param actual Actual output.
+     */
+    static diff(message: string | MarkdownString, expected: string, actual: string): TestMessage {
+        const testMessage = new TestMessage(message);
+        testMessage.expectedOutput = expected;
+        testMessage.actualOutput = actual;
+        return testMessage;
+    }
+
+    /**
+     * Creates a new TestMessage instance.
+     * @param message The message to show to the user.
+     */
+    constructor(message: string | MarkdownString) {
+        this.message = message;
+    }
+}
+
+export interface TestItemCollection extends Iterable<[string, vscode.TestItem]> {
+    /**
+     * Gets the number of items in the collection.
+     */
+    readonly size: number;
+
+    /**
+     * Replaces the items stored by the collection.
+     * @param items Items to store.
+     */
+    replace(items: readonly vscode.TestItem[]): void;
+
+    /**
+     * Iterate over each entry in this collection.
+     *
+     * @param callback Function to execute for each entry.
+     * @param thisArg The `this` context used when invoking the handler function.
+     */
+    forEach(callback: (item: vscode.TestItem, collection: TestItemCollection) => unknown, thisArg?: unknown): void;
+
+    /**
+     * Adds the test item to the children. If an item with the same ID already
+     * exists, it'll be replaced.
+     * @param item Item to add.
+     */
+    add(item: vscode.TestItem): void;
+
+    /**
+     * Removes a single test item from the collection.
+     * @param itemId Item ID to delete.
+     */
+    delete(itemId: string): void;
+
+    /**
+     * Efficiently gets a test item by ID, if it exists, in the children.
+     * @param itemId Item ID to get.
+     * @returns The found item or undefined if it does not exist.
+     */
+    get(itemId: string): vscode.TestItem | undefined;
+}
+
+/**
+ * Represents a location inside a resource, such as a line
+ * inside a text file.
+ */
+export class Location {
+    /**
+     * The resource identifier of this location.
+     */
+    uri: vscode.Uri;
+
+    /**
+     * The document range of this location.
+     */
+    range: vscode.Range;
+
+    /**
+     * Creates a new location object.
+     *
+     * @param uri The resource identifier.
+     * @param rangeOrPosition The range or position. Positions will be converted to an empty range.
+     */
+    constructor(uri: vscode.Uri, rangeOrPosition: vscode.Range) {
+        this.uri = uri;
+        this.range = rangeOrPosition;
+    }
+}
+
+/**
+ * The kind of executions that {@link TestRunProfile TestRunProfiles} control.
+ */
+export enum TestRunProfileKind {
+    /**
+     * The `Run` test profile kind.
+     */
+    Run = 1,
+    /**
+     * The `Debug` test profile kind.
+     */
+    Debug = 2,
+    /**
+     * The `Coverage` test profile kind.
+     */
+    Coverage = 3,
 }

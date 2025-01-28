@@ -6,11 +6,10 @@ import { WorkspaceFolder } from 'vscode';
 import { DocumentFilter } from 'vscode-languageclient/node';
 
 import { NodeLanguageServerAnalysisOptions } from '../../../client/activation/node/analysisOptions';
-import { LspNotebooksExperiment } from '../../../client/activation/node/lspNotebooksExperiment';
 import { ILanguageServerOutputChannel } from '../../../client/activation/types';
 import { IWorkspaceService } from '../../../client/common/application/types';
 import { PYTHON, PYTHON_LANGUAGE } from '../../../client/common/constants';
-import { IOutputChannel } from '../../../client/common/types';
+import { ILogOutputChannel } from '../../../client/common/types';
 
 suite('Pylance Language Server - Analysis Options', () => {
     class TestClass extends NodeLanguageServerAnalysisOptions {
@@ -29,20 +28,17 @@ suite('Pylance Language Server - Analysis Options', () => {
     }
 
     let analysisOptions: TestClass;
-    let outputChannel: IOutputChannel;
+    let outputChannel: ILogOutputChannel;
     let lsOutputChannel: typemoq.IMock<ILanguageServerOutputChannel>;
     let workspace: typemoq.IMock<IWorkspaceService>;
-    let lspNotebooksExperiment: typemoq.IMock<LspNotebooksExperiment>;
 
     setup(() => {
-        outputChannel = typemoq.Mock.ofType<IOutputChannel>().object;
+        outputChannel = typemoq.Mock.ofType<ILogOutputChannel>().object;
         workspace = typemoq.Mock.ofType<IWorkspaceService>();
         workspace.setup((w) => w.isVirtualWorkspace).returns(() => false);
         lsOutputChannel = typemoq.Mock.ofType<ILanguageServerOutputChannel>();
         lsOutputChannel.setup((l) => l.channel).returns(() => outputChannel);
-        lspNotebooksExperiment = typemoq.Mock.ofType<LspNotebooksExperiment>();
-        lspNotebooksExperiment.setup((l) => l.isInNotebooksExperiment()).returns(() => false);
-        analysisOptions = new TestClass(lsOutputChannel.object, workspace.object, lspNotebooksExperiment.object);
+        analysisOptions = new TestClass(lsOutputChannel.object, workspace.object);
     });
 
     test('Workspace folder is undefined', () => {

@@ -9,12 +9,7 @@ import { PythonEnvKind } from '../../info';
 import { BasicEnvInfo, IPythonEnvsIterator } from '../../locator';
 import { FSWatchingLocator } from './fsWatchingLocator';
 import { findInterpretersInDir, looksLikeBasicVirtualPython } from '../../../common/commonUtils';
-import {
-    getPythonSetting,
-    onDidChangePythonSetting,
-    pathExists,
-    untildify,
-} from '../../../common/externalDependencies';
+import { getPythonSetting, onDidChangePythonSetting, pathExists } from '../../../common/externalDependencies';
 import { isPipenvEnvironment } from '../../../common/environmentManagers/pipenv';
 import {
     isVenvEnvironment,
@@ -23,7 +18,9 @@ import {
 } from '../../../common/environmentManagers/simplevirtualenvs';
 import '../../../../common/extensions';
 import { asyncFilter } from '../../../../common/utils/arrayUtils';
-import { traceError, traceVerbose } from '../../../../logging';
+import { traceError, traceInfo, traceVerbose } from '../../../../logging';
+import { StopWatch } from '../../../../common/utils/stopWatch';
+import { untildify } from '../../../../common/helpers';
 /**
  * Default number of levels of sub-directories to recurse when looking for interpreters.
  */
@@ -44,7 +41,10 @@ async function getCustomVirtualEnvDirs(): Promise<string[]> {
     const venvFolders = getPythonSetting<string[]>(VENVFOLDERS_SETTING_KEY) ?? [];
     const homeDir = getUserHomeDir();
     if (homeDir && (await pathExists(homeDir))) {
-        venvFolders.map((item) => path.join(homeDir, item)).forEach((d) => venvDirs.push(d));
+        venvFolders
+            .map((item) => (item.startsWith(homeDir) ? item : path.join(homeDir, item)))
+            .forEach((d) => venvDirs.push(d));
+        venvFolders.forEach((item) => venvDirs.push(untildify(item)));
     }
     return asyncFilter(uniq(venvDirs), pathExists);
 }
@@ -78,7 +78,9 @@ async function getVirtualEnvKind(interpreterPath: string): Promise<PythonEnvKind
 /**
  * Finds and resolves custom virtual environments that users have provided.
  */
-export class CustomVirtualEnvironmentLocator extends FSWatchingLocator<BasicEnvInfo> {
+export class CustomVirtualEnvironmentLocator extends FSWatchingLocator {
+    public readonly providerId: string = 'custom-virtual-envs';
+
     constructor() {
         super(getCustomVirtualEnvDirs, getVirtualEnvKind, {
             // Note detecting kind of virtual env depends on the file structure around the
@@ -90,13 +92,15 @@ export class CustomVirtualEnvironmentLocator extends FSWatchingLocator<BasicEnvI
     }
 
     protected async initResources(): Promise<void> {
-        this.disposables.push(onDidChangePythonSetting(VENVPATH_SETTING_KEY, () => this.emitter.fire({})));
-        this.disposables.push(onDidChangePythonSetting(VENVFOLDERS_SETTING_KEY, () => this.emitter.fire({})));
+        this.disposables.push(onDidChangePythonSetting(VENVPATH_SETTING_KEY, () => this.fire()));
+        this.disposables.push(onDidChangePythonSetting(VENVFOLDERS_SETTING_KEY, () => this.fire()));
     }
 
     // eslint-disable-next-line class-methods-use-this
     protected doIterEnvs(): IPythonEnvsIterator<BasicEnvInfo> {
         async function* iterator() {
+            const stopWatch = new StopWatch();
+            traceInfo('Searching for custom virtual environments');
             const envRootDirs = await getCustomVirtualEnvDirs();
             const envGenerators = envRootDirs.map((envRootDir) => {
                 async function* generator() {
@@ -130,6 +134,7 @@ export class CustomVirtualEnvironmentLocator extends FSWatchingLocator<BasicEnvI
             });
 
             yield* iterable(chain(envGenerators));
+            traceInfo(`Finished searching for custom virtual envs: ${stopWatch.elapsedTime} milliseconds`);
         }
 
         return iterator();

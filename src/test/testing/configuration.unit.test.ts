@@ -7,7 +7,13 @@ import { expect } from 'chai';
 import * as typeMoq from 'typemoq';
 import { OutputChannel, Uri, WorkspaceConfiguration } from 'vscode';
 import { IApplicationShell, ICommandManager, IWorkspaceService } from '../../client/common/application/types';
-import { IConfigurationService, IInstaller, IOutputChannel, IPythonSettings, Product } from '../../client/common/types';
+import {
+    IConfigurationService,
+    IInstaller,
+    ITestOutputChannel,
+    IPythonSettings,
+    Product,
+} from '../../client/common/types';
 import { getNamesAndValues } from '../../client/common/utils/enum';
 import { IServiceContainer } from '../../client/ioc/types';
 import { UNIT_TEST_PRODUCTS } from '../../client/testing/common/constants';
@@ -18,7 +24,6 @@ import {
     ITestConfigurationManagerFactory,
     ITestsHelper,
 } from '../../client/testing/common/types';
-import { TEST_OUTPUT_CHANNEL } from '../../client/testing/constants';
 import { ITestingSettings } from '../../client/testing/configuration/types';
 import { NONE_SELECTED, UnitTestConfigurationService } from '../../client/testing/configuration';
 
@@ -56,7 +61,7 @@ suite('Unit Tests - ConfigurationService', () => {
                 configurationService.setup((c) => c.getSettings(workspaceUri)).returns(() => pythonSettings.object);
 
                 serviceContainer
-                    .setup((c) => c.get(typeMoq.It.isValue(IOutputChannel), typeMoq.It.isValue(TEST_OUTPUT_CHANNEL)))
+                    .setup((c) => c.get(typeMoq.It.isValue(ITestOutputChannel)))
                     .returns(() => outputChannel.object);
                 serviceContainer.setup((c) => c.get(typeMoq.It.isValue(IInstaller))).returns(() => installer.object);
                 serviceContainer
@@ -244,6 +249,15 @@ suite('Unit Tests - ConfigurationService', () => {
                 const selectedItem = await testConfigService.target.selectTestRunner(placeHolder);
                 expect(selectedItem).to.be.equal(undefined, 'invalid value');
                 appShell.verifyAll();
+            });
+            test('Correctly returns hasConfiguredTests', () => {
+                let enabled = false;
+                unitTestSettings.setup((u) => u.unittestEnabled).returns(() => false);
+                unitTestSettings.setup((u) => u.pytestEnabled).returns(() => enabled);
+
+                expect(testConfigService.target.hasConfiguredTests(workspaceUri)).to.equal(false);
+                enabled = true;
+                expect(testConfigService.target.hasConfiguredTests(workspaceUri)).to.equal(true);
             });
             test('Prompt to enable a test if a test framework is not enabled', async () => {
                 unitTestSettings.setup((u) => u.pytestEnabled).returns(() => false);

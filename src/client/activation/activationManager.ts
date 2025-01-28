@@ -9,8 +9,9 @@ import { IApplicationDiagnostics } from '../application/types';
 import { IActiveResourceService, IDocumentManager, IWorkspaceService } from '../common/application/types';
 import { PYTHON_LANGUAGE } from '../common/constants';
 import { IFileSystem } from '../common/platform/types';
-import { IDisposable, Resource } from '../common/types';
+import { IDisposable, IInterpreterPathService, Resource } from '../common/types';
 import { Deferred } from '../common/utils/async';
+import { StopWatch } from '../common/utils/stopWatch';
 import { IInterpreterAutoSelectionService } from '../interpreter/autoSelection/types';
 import { traceDecoratorError } from '../logging';
 import { sendActivationTelemetry } from '../telemetry/envFileTelemetry';
@@ -27,16 +28,19 @@ export class ExtensionActivationManager implements IExtensionActivationManager {
     private docOpenedHandler?: IDisposable;
 
     constructor(
-        @multiInject(IExtensionActivationService) private readonly activationServices: IExtensionActivationService[],
+        @multiInject(IExtensionActivationService) private activationServices: IExtensionActivationService[],
         @multiInject(IExtensionSingleActivationService)
-        private readonly singleActivationServices: IExtensionSingleActivationService[],
+        private singleActivationServices: IExtensionSingleActivationService[],
         @inject(IDocumentManager) private readonly documentManager: IDocumentManager,
         @inject(IInterpreterAutoSelectionService) private readonly autoSelection: IInterpreterAutoSelectionService,
         @inject(IApplicationDiagnostics) private readonly appDiagnostics: IApplicationDiagnostics,
         @inject(IWorkspaceService) private readonly workspaceService: IWorkspaceService,
         @inject(IFileSystem) private readonly fileSystem: IFileSystem,
         @inject(IActiveResourceService) private readonly activeResourceService: IActiveResourceService,
-    ) {
+        @inject(IInterpreterPathService) private readonly interpreterPathService: IInterpreterPathService,
+    ) {}
+
+    private filterServices() {
         if (!this.workspaceService.isTrusted) {
             this.activationServices = this.activationServices.filter(
                 (service) => service.supportedWorkspaceTypes.untrustedWorkspace,
@@ -66,19 +70,22 @@ export class ExtensionActivationManager implements IExtensionActivationManager {
         }
     }
 
-    public async activate(): Promise<void> {
+    public async activate(startupStopWatch: StopWatch): Promise<void> {
+        this.filterServices();
         await this.initialize();
 
         // Activate all activation services together.
 
         await Promise.all([
             ...this.singleActivationServices.map((item) => item.activate()),
-            this.activateWorkspace(this.activeResourceService.getActiveResource()),
+            this.activateWorkspace(this.activeResourceService.getActiveResource(), startupStopWatch),
         ]);
     }
 
     @traceDecoratorError('Failed to activate a workspace')
-    public async activateWorkspace(resource: Resource): Promise<void> {
+    public async activateWorkspace(resource: Resource, startupStopWatch?: StopWatch): Promise<void> {
+        const folder = this.workspaceService.getWorkspaceFolder(resource);
+        resource = folder ? folder.uri : undefined;
         const key = this.getWorkspaceKey(resource);
         if (this.activatedWorkspaces.has(key)) {
             return;
@@ -88,9 +95,10 @@ export class ExtensionActivationManager implements IExtensionActivationManager {
         if (this.workspaceService.isTrusted) {
             // Do not interact with interpreters in a untrusted workspace.
             await this.autoSelection.autoSelectInterpreter(resource);
+            await this.interpreterPathService.copyOldInterpreterStorageValuesToNew(resource);
         }
         await sendActivationTelemetry(this.fileSystem, this.workspaceService, resource);
-        await Promise.all(this.activationServices.map((item) => item.activate(resource)));
+        await Promise.all(this.activationServices.map((item) => item.activate(resource, startupStopWatch)));
         await this.appDiagnostics.performPreStartupHealthCheck(resource);
     }
 
@@ -112,8 +120,7 @@ export class ExtensionActivationManager implements IExtensionActivationManager {
         if (this.activatedWorkspaces.has(key)) {
             return;
         }
-        const folder = this.workspaceService.getWorkspaceFolder(doc.uri);
-        this.activateWorkspace(folder ? folder.uri : undefined).ignoreErrors();
+        this.activateWorkspace(doc.uri).ignoreErrors();
     }
 
     protected addHandlers(): void {

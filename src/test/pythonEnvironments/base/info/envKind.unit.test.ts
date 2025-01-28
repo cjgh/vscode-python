@@ -10,9 +10,11 @@ import { getKindDisplayName, getPrioritizedEnvKinds } from '../../../../client/p
 const KIND_NAMES: [PythonEnvKind, string][] = [
     // We handle PythonEnvKind.Unknown separately.
     [PythonEnvKind.System, 'system'],
-    [PythonEnvKind.WindowsStore, 'winStore'],
+    [PythonEnvKind.MicrosoftStore, 'winStore'],
     [PythonEnvKind.Pyenv, 'pyenv'],
     [PythonEnvKind.Poetry, 'poetry'],
+    [PythonEnvKind.Hatch, 'hatch'],
+    [PythonEnvKind.Pixi, 'pixi'],
     [PythonEnvKind.Custom, 'customGlobal'],
     [PythonEnvKind.OtherGlobal, 'otherGlobal'],
     [PythonEnvKind.Venv, 'venv'],
@@ -20,6 +22,7 @@ const KIND_NAMES: [PythonEnvKind, string][] = [
     [PythonEnvKind.VirtualEnvWrapper, 'virtualenvWrapper'],
     [PythonEnvKind.Pipenv, 'pipenv'],
     [PythonEnvKind.Conda, 'conda'],
+    [PythonEnvKind.ActiveState, 'activestate'],
     [PythonEnvKind.OtherVirtual, 'otherVirtual'],
 ];
 

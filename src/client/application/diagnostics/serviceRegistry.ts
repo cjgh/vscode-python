@@ -3,6 +3,7 @@
 
 'use strict';
 
+import { IExtensionSingleActivationService } from '../../activation/types';
 import { IServiceManager } from '../../ioc/types';
 import { IApplicationDiagnostics } from '../types';
 import { ApplicationDiagnostics } from './applicationDiagnostics';
@@ -10,10 +11,6 @@ import {
     EnvironmentPathVariableDiagnosticsService,
     EnvironmentPathVariableDiagnosticsServiceId,
 } from './checks/envPathVariable';
-import {
-    InvalidLaunchJsonDebuggerService,
-    InvalidLaunchJsonDebuggerServiceId,
-} from './checks/invalidLaunchJsonDebugger';
 import {
     InvalidPythonPathInDebuggerService,
     InvalidPythonPathInDebuggerServiceId,
@@ -32,10 +29,6 @@ import {
 } from './checks/powerShellActivation';
 import { PylanceDefaultDiagnosticService, PylanceDefaultDiagnosticServiceId } from './checks/pylanceDefault';
 import { InvalidPythonInterpreterService, InvalidPythonInterpreterServiceId } from './checks/pythonInterpreter';
-import {
-    PythonPathDeprecatedDiagnosticService,
-    PythonPathDeprecatedDiagnosticServiceId,
-} from './checks/pythonPathDeprecated';
 import {
     SwitchToDefaultLanguageServerDiagnosticService,
     SwitchToDefaultLanguageServerDiagnosticServiceId,
@@ -64,13 +57,12 @@ export function registerTypes(serviceManager: IServiceManager): void {
     );
     serviceManager.addSingleton<IDiagnosticsService>(
         IDiagnosticsService,
-        InvalidLaunchJsonDebuggerService,
-        InvalidLaunchJsonDebuggerServiceId,
-    );
-    serviceManager.addSingleton<IDiagnosticsService>(
-        IDiagnosticsService,
         InvalidPythonInterpreterService,
         InvalidPythonInterpreterServiceId,
+    );
+    serviceManager.addSingleton<IExtensionSingleActivationService>(
+        IExtensionSingleActivationService,
+        InvalidPythonInterpreterService,
     );
     serviceManager.addSingleton<IDiagnosticsService>(
         IDiagnosticsService,
@@ -86,11 +78,6 @@ export function registerTypes(serviceManager: IServiceManager): void {
         IDiagnosticsService,
         InvalidMacPythonInterpreterService,
         InvalidMacPythonInterpreterServiceId,
-    );
-    serviceManager.addSingleton<IDiagnosticsService>(
-        IDiagnosticsService,
-        PythonPathDeprecatedDiagnosticService,
-        PythonPathDeprecatedDiagnosticServiceId,
     );
 
     serviceManager.addSingleton<IDiagnosticsService>(

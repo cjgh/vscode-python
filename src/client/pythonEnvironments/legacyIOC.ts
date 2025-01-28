@@ -9,8 +9,13 @@ import { Resource } from '../common/types';
 import { IComponentAdapter, ICondaService, PythonEnvironmentsChangedEvent } from '../interpreter/contracts';
 import { IServiceManager } from '../ioc/types';
 import { PythonEnvInfo, PythonEnvKind, PythonEnvSource } from './base/info';
-import { IDiscoveryAPI, PythonLocatorQuery, TriggerRefreshOptions } from './base/locator';
-import { isMacDefaultPythonPath } from './base/locators/lowLevel/macDefaultLocator';
+import {
+    GetRefreshEnvironmentsOptions,
+    IDiscoveryAPI,
+    PythonLocatorQuery,
+    TriggerRefreshOptions,
+} from './base/locator';
+import { isMacDefaultPythonPath } from './common/environmentManagers/macDefault';
 import { isParentPath } from './common/externalDependencies';
 import { EnvironmentType, PythonEnvironment } from './info';
 import { toSemverLikeVersion } from './base/info/pythonVersion';
@@ -19,7 +24,7 @@ import { createDeferred } from '../common/utils/async';
 import { PythonEnvCollectionChangedEvent } from './base/watcher';
 import { asyncFilter } from '../common/utils/arrayUtils';
 import { CondaEnvironmentInfo, isCondaEnvironment } from './common/environmentManagers/conda';
-import { isWindowsStoreEnvironment } from './common/environmentManagers/windowsStoreEnv';
+import { isMicrosoftStoreEnvironment } from './common/environmentManagers/microsoftStoreEnv';
 import { CondaService } from './common/environmentManagers/condaService';
 import { traceVerbose } from '../logging';
 
@@ -27,14 +32,17 @@ const convertedKinds = new Map(
     Object.entries({
         [PythonEnvKind.OtherGlobal]: EnvironmentType.Global,
         [PythonEnvKind.System]: EnvironmentType.System,
-        [PythonEnvKind.WindowsStore]: EnvironmentType.WindowsStore,
+        [PythonEnvKind.MicrosoftStore]: EnvironmentType.MicrosoftStore,
         [PythonEnvKind.Pyenv]: EnvironmentType.Pyenv,
         [PythonEnvKind.Conda]: EnvironmentType.Conda,
         [PythonEnvKind.VirtualEnv]: EnvironmentType.VirtualEnv,
         [PythonEnvKind.Pipenv]: EnvironmentType.Pipenv,
         [PythonEnvKind.Poetry]: EnvironmentType.Poetry,
+        [PythonEnvKind.Hatch]: EnvironmentType.Hatch,
+        [PythonEnvKind.Pixi]: EnvironmentType.Pixi,
         [PythonEnvKind.Venv]: EnvironmentType.Venv,
         [PythonEnvKind.VirtualEnvWrapper]: EnvironmentType.VirtualEnvWrapper,
+        [PythonEnvKind.ActiveState]: EnvironmentType.ActiveState,
     }),
 );
 
@@ -74,16 +82,13 @@ function convertEnvInfo(info: PythonEnvInfo): PythonEnvironment {
     }
     env.displayName = info.display;
     env.detailedDisplayName = info.detailedDisplayName;
+    env.type = info.type;
     // We do not worry about using distro.defaultDisplayName.
 
     return env;
 }
 @injectable()
 class ComponentAdapter implements IComponentAdapter {
-    private readonly refreshing = new vscode.EventEmitter<void>();
-
-    private readonly refreshed = new vscode.EventEmitter<void>();
-
     private readonly changed = new vscode.EventEmitter<PythonEnvironmentsChangedEvent>();
 
     constructor(
@@ -104,8 +109,8 @@ class ComponentAdapter implements IComponentAdapter {
         return this.api.triggerRefresh(query, options);
     }
 
-    public getRefreshPromise() {
-        return this.api.getRefreshPromise();
+    public getRefreshPromise(options?: GetRefreshEnvironmentsOptions) {
+        return this.api.getRefreshPromise(options);
     }
 
     public get onProgress() {
@@ -133,15 +138,6 @@ class ComponentAdapter implements IComponentAdapter {
                 callback();
             }
         });
-    }
-
-    // Implements IInterpreterLocatorProgressHandler
-    public get onRefreshing(): vscode.Event<void> {
-        return this.refreshing.event;
-    }
-
-    public get onRefreshed(): vscode.Event<void> {
-        return this.refreshed.event;
     }
 
     // Implements IInterpreterHelper
@@ -199,10 +195,10 @@ class ComponentAdapter implements IComponentAdapter {
     }
 
     // eslint-disable-next-line class-methods-use-this
-    public async isWindowsStoreInterpreter(pythonPath: string): Promise<boolean> {
-        // Eventually we won't be calling 'isWindowsStoreInterpreter' in the component adapter, so we won't
-        // need to use 'isWindowsStoreEnvironment' directly here. This is just a temporary implementation.
-        return isWindowsStoreEnvironment(pythonPath);
+    public async isMicrosoftStoreInterpreter(pythonPath: string): Promise<boolean> {
+        // Eventually we won't be calling 'isMicrosoftStoreInterpreter' in the component adapter, so we won't
+        // need to use 'isMicrosoftStoreEnvironment' directly here. This is just a temporary implementation.
+        return isMicrosoftStoreEnvironment(pythonPath);
     }
 
     // Implements IInterpreterLocatorService
@@ -231,9 +227,6 @@ class ComponentAdapter implements IComponentAdapter {
     }
 
     public getInterpreters(resource?: vscode.Uri, source?: PythonEnvSource[]): PythonEnvironment[] {
-        // Notify locators are locating.
-        this.refreshing.fire();
-
         const query: PythonLocatorQuery = {};
         let roots: vscode.Uri[] = [];
         let wsFolder: vscode.WorkspaceFolder | undefined;
@@ -262,12 +255,7 @@ class ComponentAdapter implements IComponentAdapter {
             envs = envs.filter((env) => intersection(source, env.source).length > 0);
         }
 
-        const legacyEnvs = envs.map(convertEnvInfo);
-
-        // Notify all locators have completed locating. Note it's crucial to notify this even when getInterpretersViaAPI
-        // fails, to ensure "Python extension loading..." text disappears.
-        this.refreshed.fire();
-        return legacyEnvs;
+        return envs.map(convertEnvInfo);
     }
 
     public async getWorkspaceVirtualEnvInterpreters(

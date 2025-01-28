@@ -9,14 +9,12 @@ import { registerTypes } from '../../client/activation/serviceRegistry';
 import {
     IExtensionActivationManager,
     IExtensionSingleActivationService,
-    ILanguageServerCache,
     ILanguageServerOutputChannel,
 } from '../../client/activation/types';
 import { ServiceManager } from '../../client/ioc/serviceManager';
 import { IServiceManager } from '../../client/ioc/types';
 import { LoadLanguageServerExtension } from '../../client/activation/common/loadLanguageServerExtension';
-import { ILanguageServerWatcher } from '../../client/languageServer/types';
-import { LanguageServerWatcher } from '../../client/languageServer/watcher';
+import { RequirementsTxtLinkActivator } from '../../client/activation/requirementsTxtLinkActivator';
 
 suite('Unit Tests - Language Server Activation Service Registry', () => {
     let serviceManager: IServiceManager;
@@ -28,7 +26,6 @@ suite('Unit Tests - Language Server Activation Service Registry', () => {
     test('Ensure common services are registered', async () => {
         registerTypes(instance(serviceManager));
 
-        verify(serviceManager.addSingleton<ILanguageServerCache>(ILanguageServerWatcher, LanguageServerWatcher)).once();
         verify(
             serviceManager.add<IExtensionActivationManager>(IExtensionActivationManager, ExtensionActivationManager),
         ).once();
@@ -48,6 +45,12 @@ suite('Unit Tests - Language Server Activation Service Registry', () => {
             serviceManager.addSingleton<IExtensionSingleActivationService>(
                 IExtensionSingleActivationService,
                 LoadLanguageServerExtension,
+            ),
+        ).once();
+        verify(
+            serviceManager.addSingleton<IExtensionSingleActivationService>(
+                IExtensionSingleActivationService,
+                RequirementsTxtLinkActivator,
             ),
         ).once();
     });

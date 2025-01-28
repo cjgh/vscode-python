@@ -1,12 +1,12 @@
 // Copyright (c) Microsoft Corporation. All rights reserved.
 // Licensed under the MIT License.
 
-import { inject, injectable, optional } from 'inversify';
+import { inject, injectable } from 'inversify';
 import { ConfigurationTarget, Uri } from 'vscode';
 import { IExtensionActivationService } from '../../activation/types';
 import { IApplicationEnvironment, IApplicationShell, IWorkspaceService } from '../../common/application/types';
 import { IPlatformService } from '../../common/platform/types';
-import { IBrowserService, IPersistentStateFactory } from '../../common/types';
+import { IPersistentStateFactory } from '../../common/types';
 import { Common, Interpreters } from '../../common/utils/localize';
 import { traceDecoratorError, traceError } from '../../logging';
 import { EnvironmentType } from '../../pythonEnvironments/info';
@@ -22,12 +22,11 @@ export class CondaInheritEnvPrompt implements IExtensionActivationService {
     constructor(
         @inject(IInterpreterService) private readonly interpreterService: IInterpreterService,
         @inject(IWorkspaceService) private readonly workspaceService: IWorkspaceService,
-        @inject(IBrowserService) private browserService: IBrowserService,
         @inject(IApplicationShell) private readonly appShell: IApplicationShell,
         @inject(IPersistentStateFactory) private readonly persistentStateFactory: IPersistentStateFactory,
         @inject(IPlatformService) private readonly platformService: IPlatformService,
         @inject(IApplicationEnvironment) private readonly appEnvironment: IApplicationEnvironment,
-        @optional() public hasPromptBeenShownInCurrentSession: boolean = false,
+        public hasPromptBeenShownInCurrentSession: boolean = false,
     ) {}
 
     public async activate(resource: Uri): Promise<void> {
@@ -52,8 +51,8 @@ export class CondaInheritEnvPrompt implements IExtensionActivationService {
         if (!notificationPromptEnabled.value) {
             return;
         }
-        const prompts = [Common.bannerLabelYes, Common.bannerLabelNo, Common.moreInfo];
-        const telemetrySelections: ['Yes', 'No', 'More Info'] = ['Yes', 'No', 'More Info'];
+        const prompts = [Common.allow, Common.close];
+        const telemetrySelections: ['Allow', 'Close'] = ['Allow', 'Close'];
         const selection = await this.appShell.showInformationMessage(Interpreters.condaInheritEnvMessage, ...prompts);
         sendTelemetryEvent(EventName.CONDA_INHERIT_ENV_PROMPT, undefined, {
             selection: selection ? telemetrySelections[prompts.indexOf(selection)] : undefined,
@@ -67,8 +66,6 @@ export class CondaInheritEnvPrompt implements IExtensionActivationService {
                 .update('integrated.inheritEnv', false, ConfigurationTarget.Global);
         } else if (selection === prompts[1]) {
             await notificationPromptEnabled.updateValue(false);
-        } else if (selection === prompts[2]) {
-            this.browserService.launch('https://aka.ms/AA66i8f');
         }
     }
 

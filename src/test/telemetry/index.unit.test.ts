@@ -4,46 +4,39 @@
 
 import { expect } from 'chai';
 import rewiremock from 'rewiremock';
-import * as TypeMoq from 'typemoq';
+import * as sinon from 'sinon';
+import * as fs from '../../client/common/platform/fs-paths';
 
-import { instance, mock, verify, when } from 'ts-mockito';
-import { WorkspaceConfiguration } from 'vscode';
-import { IWorkspaceService } from '../../client/common/application/types';
-import { WorkspaceService } from '../../client/common/application/workspace';
 import {
     _resetSharedProperties,
     clearTelemetryReporter,
-    isTelemetryDisabled,
     sendTelemetryEvent,
     setSharedProperty,
 } from '../../client/telemetry';
 
 suite('Telemetry', () => {
-    let workspaceService: IWorkspaceService;
     const oldValueOfVSC_PYTHON_UNIT_TEST = process.env.VSC_PYTHON_UNIT_TEST;
     const oldValueOfVSC_PYTHON_CI_TEST = process.env.VSC_PYTHON_CI_TEST;
+    let readJSONSyncStub: sinon.SinonStub;
 
     class Reporter {
         public static eventName: string[] = [];
         public static properties: Record<string, string>[] = [];
         public static measures: {}[] = [];
-        public static errorProps: string[] | undefined;
         public static exception: Error | undefined;
 
         public static clear() {
             Reporter.eventName = [];
             Reporter.properties = [];
             Reporter.measures = [];
-            Reporter.errorProps = undefined;
         }
         public sendTelemetryEvent(eventName: string, properties?: {}, measures?: {}) {
             Reporter.eventName.push(eventName);
             Reporter.properties.push(properties!);
             Reporter.measures.push(measures!);
         }
-        public sendTelemetryErrorEvent(eventName: string, properties?: {}, measures?: {}, errorProps?: string[]) {
+        public sendTelemetryErrorEvent(eventName: string, properties?: {}, measures?: {}) {
             this.sendTelemetryEvent(eventName, properties, measures);
-            Reporter.errorProps = errorProps;
         }
         public sendTelemetryException(_error: Error, _properties?: {}, _measures?: {}): void {
             throw new Error('sendTelemetryException is unsupported');
@@ -51,9 +44,10 @@ suite('Telemetry', () => {
     }
 
     setup(() => {
-        workspaceService = mock(WorkspaceService);
         process.env.VSC_PYTHON_UNIT_TEST = undefined;
         process.env.VSC_PYTHON_CI_TEST = undefined;
+        readJSONSyncStub = sinon.stub(fs, 'readJSONSync');
+        readJSONSyncStub.returns({ enableTelemetry: true });
         clearTelemetryReporter();
         Reporter.clear();
     });
@@ -62,42 +56,12 @@ suite('Telemetry', () => {
         process.env.VSC_PYTHON_CI_TEST = oldValueOfVSC_PYTHON_CI_TEST;
         rewiremock.disable();
         _resetSharedProperties();
-    });
-
-    const testsForisTelemetryDisabled = [
-        {
-            testName: 'Returns true when globalValue is set to false',
-            settings: { globalValue: false },
-            expectedResult: true,
-        },
-        {
-            testName: 'Returns false otherwise',
-            settings: {},
-            expectedResult: false,
-        },
-    ];
-
-    suite('Function isTelemetryDisabled()', () => {
-        testsForisTelemetryDisabled.forEach((testParams) => {
-            test(testParams.testName, async () => {
-                const workspaceConfig = TypeMoq.Mock.ofType<WorkspaceConfiguration>();
-                when(workspaceService.getConfiguration('telemetry')).thenReturn(workspaceConfig.object);
-                workspaceConfig
-                    .setup((c) => c.inspect<string>('enableTelemetry'))
-                    .returns(() => testParams.settings as any)
-                    .verifiable(TypeMoq.Times.once());
-
-                expect(isTelemetryDisabled(instance(workspaceService))).to.equal(testParams.expectedResult);
-
-                verify(workspaceService.getConfiguration('telemetry')).once();
-                workspaceConfig.verifyAll();
-            });
-        });
+        sinon.restore();
     });
 
     test('Send Telemetry', () => {
         rewiremock.enable();
-        rewiremock('vscode-extension-telemetry').with({ default: Reporter });
+        rewiremock('@vscode/extension-telemetry').with({ default: Reporter });
 
         const eventName = 'Testing';
         const properties = { hello: 'world', foo: 'bar' };
@@ -111,7 +75,7 @@ suite('Telemetry', () => {
     });
     test('Send Telemetry with no properties', () => {
         rewiremock.enable();
-        rewiremock('vscode-extension-telemetry').with({ default: Reporter });
+        rewiremock('@vscode/extension-telemetry').with({ default: Reporter });
 
         const eventName = 'Testing';
 
@@ -123,7 +87,7 @@ suite('Telemetry', () => {
     });
     test('Send Telemetry with shared properties', () => {
         rewiremock.enable();
-        rewiremock('vscode-extension-telemetry').with({ default: Reporter });
+        rewiremock('@vscode/extension-telemetry').with({ default: Reporter });
 
         const eventName = 'Testing';
         const properties = { hello: 'world', foo: 'bar' };
@@ -140,7 +104,7 @@ suite('Telemetry', () => {
     });
     test('Shared properties will replace existing ones', () => {
         rewiremock.enable();
-        rewiremock('vscode-extension-telemetry').with({ default: Reporter });
+        rewiremock('@vscode/extension-telemetry').with({ default: Reporter });
 
         const eventName = 'Testing';
         const properties = { hello: 'world', foo: 'bar' };
@@ -158,7 +122,7 @@ suite('Telemetry', () => {
     test('Send Exception Telemetry', () => {
         rewiremock.enable();
         const error = new Error('Boo');
-        rewiremock('vscode-extension-telemetry').with({ default: Reporter });
+        rewiremock('@vscode/extension-telemetry').with({ default: Reporter });
 
         const eventName = 'Testing';
         const measures = { start: 123, end: 987 };
@@ -169,13 +133,11 @@ suite('Telemetry', () => {
         const expectedProperties = {
             ...properties,
             errorName: error.name,
-            errorMessage: error.message,
             errorStack: error.stack,
         };
 
         expect(Reporter.eventName).to.deep.equal([eventName]);
         expect(Reporter.properties).to.deep.equal([expectedProperties]);
         expect(Reporter.measures).to.deep.equal([measures]);
-        expect(Reporter.errorProps).to.deep.equal(['errorName', 'errorMessage', 'errorStack']);
     });
 });

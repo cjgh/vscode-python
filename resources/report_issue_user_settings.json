@@ -7,9 +7,11 @@
     "envFile": "placeholder",
     "venvPath": "placeholder",
     "venvFolders": "placeholder",
+    "activeStateToolPath": "placeholder",
     "condaPath": "placeholder",
     "pipenvPath": "placeholder",
     "poetryPath": "placeholder",
+    "pixiToolPath": "placeholder",
     "devOptions": false,
     "globalModuleInstallation": false,
     "languageServer": true,
@@ -67,19 +69,6 @@
         "typeCheckingMode": true,
         "memory": true,
         "symbolsHierarchyDepthLimit": false
-    },
-    "sortImports": {
-        "args": "placeholder",
-        "path": "placeholder"
-    },
-    "formatting": {
-        "autopep8Args": "placeholder",
-        "autopep8Path": "placeholder",
-        "provider": true,
-        "blackArgs": "placeholder",
-        "blackPath": "placeholder",
-        "yapfArgs": "placeholder",
-        "yapfPath": "placeholder"
     },
     "testing": {
         "cwd": "placeholder",
